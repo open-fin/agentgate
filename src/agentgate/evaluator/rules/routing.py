@@ -17,7 +17,7 @@ class SkillRoutingEvaluator(Evaluator):
     def applies_to(self, spec, turn) -> bool:
         return turn.expected_skill is not None
 
-    def evaluate(self, spec, turn, trace, resolve) -> Evaluation:
+    def evaluate(self, spec, turn, trace, resolve, context) -> Evaluation:
         span = next((item for item in trace.spans if item.kind == SpanKind.ROUTING), None)
         method = MethodRef(operator="equals", operator_version="1")
         if span is None:

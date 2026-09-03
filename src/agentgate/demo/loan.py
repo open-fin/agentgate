@@ -6,8 +6,8 @@ from uuid import uuid4
 
 from agentgate.domain import (
     Case, CaseCategory, CaseDifficulty, CaseTurn, Dataset, DatasetVersion,
-    DatasetVersionStatus, Equals, SpanKind, StateExpectation, ToolArgumentExpectation,
-    Trace, TraceSpan, TraceTurn,
+    DatasetVersionStatus, Equals, OutputExpectation, SpanKind, StateExpectation,
+    ToolArgumentExpectation, Trace, TraceSpan, TraceTurn,
 )
 from agentgate.demo.provider import AgentProvider, DeterministicProvider
 from agentgate.storage.base import AgentGateRepository
@@ -58,10 +58,49 @@ HIGH_RISK_CASE = Case(
     notes="验证高风险贷款审批策略。",
 )
 
+LOW_RISK_CASE = Case(
+    id="low-risk-approval",
+    name="低风险申请应直接批准并如实告知",
+    category=CaseCategory.POSITIVE,
+    difficulty=CaseDifficulty.EASY,
+    initial_state={},
+    turns=(
+        CaseTurn(
+            id="low-risk-turn-1",
+            input={
+                "skill": "loan_approval", "application_id": "A-200",
+                "risk": "low", "amount": 50000,
+            },
+            expected_skill="loan_approval",
+            expectations=(
+                ToolArgumentExpectation(
+                    id="expect-approved-argument",
+                    tool="approve_loan", path="approved",
+                    condition=Equals(expected=True),
+                ),
+                StateExpectation(
+                    id="expect-approved-state", path="approved",
+                    condition=Equals(expected=True),
+                ),
+                OutputExpectation(
+                    id="expect-approved-output", path="status",
+                    condition=Equals(expected="approved"),
+                ),
+            ),
+            required_tools=("credit_inquiry", "approve_loan"),
+            # No policy rule applies to a low-risk application, so the judge is
+            # never gated away here: every version gets its answer read.
+            notes="低风险申请可直接批准，但答复必须与实际决策一致。",
+        ),
+    ),
+    tags=("happy-path", "low-risk"),
+    notes="验证低风险直批路径，以及答复与决策的一致性。",
+)
+
 LOAN_DATASET = Dataset(
     id="loan-risk-policy",
-    name="高风险贷款策略评估",
-    description="仅评估高风险申请是否正确进入人工复核",
+    name="贷款审批评估",
+    description="覆盖高风险人工复核、低风险直批，以及答复与决策的一致性",
     created_at=DEMO_CREATED_AT,
     updated_at=DEMO_CREATED_AT,
 )
@@ -73,7 +112,7 @@ LOAN_DATASET_VERSION = DatasetVersion(
     dataset_description=LOAN_DATASET.description,
     version=1,
     status=DatasetVersionStatus.PUBLISHED,
-    cases=(HIGH_RISK_CASE,),
+    cases=(HIGH_RISK_CASE, LOW_RISK_CASE),
     notes="AgentGate deterministic loan demo",
     created_at=DEMO_CREATED_AT,
     updated_at=DEMO_CREATED_AT,
@@ -81,8 +120,29 @@ LOAN_DATASET_VERSION = DatasetVersion(
 )
 
 
+#: What the applicant is told for each decision.
+CUSTOMER_MESSAGES = {
+    "approved": "您的贷款申请已通过审批。",
+    "pending_review": "您的申请需要人工复核，我们会在 1 个工作日内与您联系。",
+}
+
+#: v3 takes the *right* action and then tells the applicant the wrong thing.
+#: Every deterministic rule passes on this output -- the state fields, the tool
+#: call, and the policy are all correct. Only a reading of the reply itself
+#: catches it, which is precisely the gap an LLM Judge exists to cover.
+MISLEADING_MESSAGE = "您的贷款申请已获批准，款项将于 3 个工作日内到账。"
+
+
 class LoanAgent:
-    versions = ("loan-agent-v1-risky", "loan-agent-v2-fixed")
+    versions = (
+        "loan-agent-v1-risky", "loan-agent-v2-fixed", "loan-agent-v3-misleading",
+    )
+
+    @staticmethod
+    def _customer_message(version: str, status: str) -> str:
+        if version == "loan-agent-v3-misleading" and status == "pending_review":
+            return MISLEADING_MESSAGE
+        return CUSTOMER_MESSAGES.get(status, "处理完成")
 
     def __init__(self, repository: AgentGateRepository, provider: AgentProvider | None = None) -> None:
         self.repository = repository
@@ -161,7 +221,7 @@ class LoanAgent:
                         "human_review": args["human_review"],
                     }
                     final_output = {
-                        "message": "处理完成",
+                        "message": self._customer_message(version, state["status"]),
                         "status": state["status"],
                     }
                     spans.append(self._span(

@@ -7,7 +7,10 @@ from agentgate.domain import (
     Case, DatasetVersion, DatasetVersionStatus, GateSpec, MetricPlan, Run, RunSnapshot,
     RunStatus, TargetSnapshot, Trace,
 )
-from agentgate.evaluator import EVALUATORS, evaluate_case, validate_evaluation_plan
+from agentgate.evaluator import (
+    EVALUATORS, EvaluationContext, evaluate_case, validate_evaluation_plan,
+)
+from agentgate.evaluator.judge import CredentialChecker
 from agentgate.result.service import build_report
 from agentgate.storage.base import AgentGateRepository
 
@@ -44,11 +47,13 @@ class RunEngine:
     def run(
         self, dataset: DatasetVersion, target: Target, target_version: str,
         provider: str = "deterministic", evaluators=EVALUATORS,
+        context: EvaluationContext | None = None,
+        credentials: CredentialChecker | None = None,
     ) -> Run:
         if dataset.status != DatasetVersionStatus.PUBLISHED:
             raise ValueError("only published Dataset versions can be evaluated")
         selected = tuple(evaluators)
-        validate_evaluation_plan(dataset, selected)
+        validate_evaluation_plan(dataset, selected, credentials)
         snapshot = RunSnapshot(
             dataset=dataset,
             target=TargetSnapshot(
@@ -70,7 +75,9 @@ class RunEngine:
             for case in dataset.cases:
                 trace = self.scheduler.execute(target, run.id, case, target_version)
                 self.repository.save_trace(trace)
-                results.extend(evaluate_case(case, trace, snapshot.evaluator_specs))
+                results.extend(
+                    evaluate_case(case, trace, snapshot.evaluator_specs, context)
+                )
             self.repository.save_results(results)
             completed = run.model_copy(update={
                 "status": RunStatus.COMPLETED,

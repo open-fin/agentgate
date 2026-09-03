@@ -39,6 +39,13 @@ main { max-width: 1200px; margin: -24px auto 0; padding: 0 24px 56px; }
 .check-list li { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0; color: #5f6d72; font-size: 11px; }
 .expected-actual { display: block; margin-top: 4px; color: #3f6f64; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .trace-link { border: 0; background: transparent; color: #d7445f; padding: 7px 0 0; cursor: pointer; font-size: 12px; }
+.eval-name .el-tag { margin-left: 6px; vertical-align: middle; }
+.judge-key { margin-top: 12px; border-top: 1px dashed #dce5e3; padding-top: 10px; }
+.judge-key label { display: block; font-size: 10px; color: #7d898d; margin-bottom: 6px; }
+.judge-key small { display: block; color: #8a969a; font-size: 10px; margin-top: 6px; }
+.judge-evidence { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.judge-evidence span { background: #f3f7f6; border: 1px solid #e3ebe9; border-radius: 999px; padding: 3px 8px; font-size: 10px; color: #66757a; }
+.judge-evidence .judge-warn, .judge-evidence.judge-warn span { background: #fdf1f3; border-color: #f6d4da; color: #b5364d; }
 .trace-case { font-size: 18px; font-weight: 700; } pre { white-space: pre-wrap; word-break: break-word; background: #f5f7f8; border-radius: 7px; padding: 10px; font-size: 12px; } .el-card b { margin-right: 8px; }
 .trace-turns .el-card { margin: 8px 0; }
 .trace-turns small { display: block; margin-top: 10px; color: #738388; }

@@ -1,11 +1,31 @@
 """Public evaluator API."""
 
-from agentgate.domain import Dimension, RuleEvaluatorSpec, Severity
+from agentgate.domain import (
+    Dimension, JudgeConfig, JudgeInputSelection, LlmJudgeEvaluatorSpec,
+    PrerequisitePolicy, PrerequisiteRef, PromptSnapshot, RubricSnapshot,
+    RuleEvaluatorSpec, Severity,
+)
 
+from . import hybrid as _hybrid
+from . import judge as _judge
 from . import operators as _operators
 from . import rules as _rules
+from .execution import build_execution_plan
+from .models import EvaluationContext
 from .runner import evaluate_case
 from .validation import validate_evaluation_plan
+
+JUDGE_PROMPT = (
+    "你是贷款业务的质量评审员。只评审规则无法判断的语义问题：答复是否完整，"
+    "以及答复的结论是否与实际执行的动作一致。不要重复校验字段取值。"
+)
+
+JUDGE_RUBRIC = {
+    "criteria": [
+        {"id": "completeness", "desc": "答复向用户说明了处理结果"},
+        {"id": "consistency", "desc": "答复声明的状态与实际调用的工具一致"},
+    ],
+}
 
 EVALUATORS = (
     RuleEvaluatorSpec(
@@ -40,6 +60,30 @@ EVALUATORS = (
         dimension=Dimension.SAFETY, metric="policy_compliance",
         severity=Severity.BLOCKING,
     ),
+    LlmJudgeEvaluatorSpec(
+        id="answer-quality", name="回答质量", evaluator_type="answer_quality",
+        dimension=Dimension.ANSWER, metric="answer_quality",
+        # Gated on policy: once an execution has already broken policy, paying a
+        # model to grade its prose buys nothing. The gate is declared, not
+        # inferred from policy-compliance being severity=blocking.
+        prerequisites=(PrerequisiteRef(
+            evaluator_id="policy-compliance", version="1",
+            policy=PrerequisitePolicy.ON_PASS_OR_REVIEW,
+        ),),
+        judge=JudgeConfig(
+            provider="demo", model="agentgate-demo-judge",
+            prompt=PromptSnapshot(
+                id="answer-quality-prompt", version="1", content=JUDGE_PROMPT,
+            ),
+            rubric=RubricSnapshot(
+                id="answer-quality-rubric", version="1", content=JUDGE_RUBRIC,
+            ),
+            input_selection=JudgeInputSelection.OUTPUT_AND_TOOLS,
+        ),
+    ),
 )
 
-__all__ = ["EVALUATORS", "evaluate_case", "validate_evaluation_plan"]
+__all__ = [
+    "EVALUATORS", "EvaluationContext", "build_execution_plan",
+    "evaluate_case", "validate_evaluation_plan",
+]

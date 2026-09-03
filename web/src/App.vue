@@ -1,17 +1,20 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { api, type DatasetOption, type EvaluatorOption, type Overview, type Report, type Run, type Trace, type Version } from './api/client'
+import { api, type DatasetOption, type EvaluatorKind, type EvaluatorOption, type JudgeCredential, type Overview, type Report, type Run, type Trace, type Version } from './api/client'
 import DatasetWorkspace from './pages/DatasetWorkspace.vue'
 
 const overview = ref<Overview>({ total_runs: 0, completed_runs: 0, case_count: 0, latest: null })
 const versions = ref<Version[]>([])
 const datasets = ref<DatasetOption[]>([])
 const evaluators = ref<EvaluatorOption[]>([])
+const judgeCredentials = ref<JudgeCredential[]>([])
 const runs = ref<Run[]>([])
 const selectedVersion = ref('loan-agent-v2-fixed')
 const selectedDataset = ref('loan-risk-policy')
 const selectedEvaluators = ref<string[]>([])
+/** null = the demo judge, which needs no key. */
+const selectedJudgeCredential = ref<string|null>(null)
 const report = ref<Report|null>(null)
 const trace = ref<Trace|null>(null)
 const loading = ref(false)
@@ -22,15 +25,21 @@ const caseNames = computed(() => Object.fromEntries((report.value?.run.snapshot.
 const failed = computed(() => report.value?.results.filter(item => item.outcome === 'fail') ?? [])
 const selectedAgent = computed(() => versions.value.find(item => item.id === selectedVersion.value))
 const selectedDatasetInfo = computed(() => datasets.value.find(item => item.id === selectedDataset.value))
+const kindsInUse = computed(() => new Set(
+  evaluators.value.filter(item => selectedEvaluators.value.includes(item.id)).map(item => item.kind)
+))
+const judgeSelected = computed(() => kindsInUse.value.has('llm_judge'))
+const evaluatorById = computed(() => Object.fromEntries(evaluators.value.map(item => [item.id, item])))
 
 async function refresh() {
-  const [summary, targetVersions, datasetOptions, evaluatorOptions, recentRuns] = await Promise.all([
-    api.overview(), api.versions(), api.datasets(), api.evaluators(), api.runs(),
+  const [summary, targetVersions, datasetOptions, evaluatorOptions, credentials, recentRuns] = await Promise.all([
+    api.overview(), api.versions(), api.datasets(), api.evaluators(), api.judgeCredentials(), api.runs(),
   ])
   overview.value = summary
   versions.value = targetVersions
   datasets.value = datasetOptions
   evaluators.value = evaluatorOptions
+  judgeCredentials.value = credentials
   runs.value = recentRuns
   if (selectedEvaluators.value.length === 0) selectedEvaluators.value = evaluatorOptions.map(item => item.id)
   if (!report.value && summary.latest) report.value = summary.latest
@@ -41,7 +50,7 @@ async function launch() {
   if (selectedDatasetInfo.value?.version == null) return ElMessage.warning('请选择已有发布版本的测评集')
   loading.value = true
   try {
-    const run = await api.launch(selectedVersion.value, selectedDataset.value, selectedDatasetInfo.value.version, selectedEvaluators.value)
+    const run = await api.launch(selectedVersion.value, selectedDataset.value, selectedDatasetInfo.value.version, selectedEvaluators.value, judgeSelected.value ? selectedJudgeCredential.value : null)
     report.value = await api.report(run.id)
     await refresh()
     document.querySelector('#result-report')?.scrollIntoView({ behavior: 'smooth' })
@@ -68,6 +77,11 @@ async function showCreatedRun(run: Run) {
 const asPercent = (score: number|null) => score === null ? 'N/A' : `${Math.round(score * 100)}%`
 const outcomeText = { pass: '通过', fail: '失败', review: '待复核', not_applicable: '不适用', error: '评估错误' }
 const outcomeType = (outcome: string) => outcome === 'pass' ? 'success' : outcome === 'not_applicable' ? 'info' : outcome === 'review' ? 'warning' : 'danger'
+const kindText: Record<EvaluatorKind, string> = { rule: '规则评估器', llm_judge: 'LLM 评估器', hybrid: '复合评估器' }
+const policyText: Record<string, string> = { on_pass: '前置通过时执行', on_pass_or_review: '前置通过或待复核时执行', always: '始终执行' }
+/** Vote distribution as "pass 2 · fail 1", so a split decision stays visible. */
+const voteText = (votes: Record<string, number>) =>
+  Object.entries(votes).map(([label, count]) => `${outcomeText[label as keyof typeof outcomeText] ?? label} ${count}`).join(' · ')
 
 onMounted(() => {
   window.addEventListener('popstate', onPopState)
@@ -113,15 +127,35 @@ onUnmounted(() => window.removeEventListener('popstate', onPopState))
           <article class="config-card evaluator-card">
             <div class="card-index">E</div><label>Evaluators & Metrics</label>
             <div class="evaluator-kinds" aria-label="评估器分类">
-              <span class="active-kind">规则评估器</span>
-              <span>LLM Judge · P2</span>
-              <span>Hybrid · P2</span>
+              <span v-for="kind in (['rule','llm_judge','hybrid'] as EvaluatorKind[])" :key="kind" :class="{ 'active-kind': kindsInUse.has(kind) }">
+                {{ kindText[kind] }}<template v-if="!evaluators.some(item => item.kind === kind)"> · 未配置</template>
+              </span>
             </div>
             <el-checkbox-group v-model="selectedEvaluators" class="evaluator-list">
               <el-checkbox v-for="item in evaluators" :key="item.id" :value="item.id" border>
-                <span class="eval-name">{{ item.name }}</span><small>{{ item.metric }} · {{ item.dimension }}</small>
+                <span class="eval-name">
+                  {{ item.name }}
+                  <el-tag v-if="item.kind !== 'rule'" size="small" type="warning" effect="plain">{{ kindText[item.kind] }}</el-tag>
+                </span>
+                <small>
+                  {{ item.metric }} · {{ item.dimension }}
+                  <template v-for="ref in item.prerequisites" :key="ref.evaluator_id">
+                    · 依赖 {{ evaluatorById[ref.evaluator_id]?.name ?? ref.evaluator_id }}（{{ policyText[ref.policy] }}）
+                  </template>
+                </small>
               </el-checkbox>
             </el-checkbox-group>
+            <div v-if="judgeSelected" class="judge-key" data-testid="judge-key">
+              <label>LLM 评估器 Key</label>
+              <el-select v-model="selectedJudgeCredential" aria-label="评估 Key" clearable placeholder="内置演示评审（无需 Key）">
+                <el-option
+                  v-for="item in judgeCredentials" :key="item.id" :value="item.id"
+                  :label="item.available ? item.label : `${item.label}（未配置）`"
+                  :disabled="!item.available"
+                />
+              </el-select>
+              <small>仅传递 Key 引用，明文不会进入任务、接口或日志。</small>
+            </div>
           </article>
         </div>
 
@@ -164,6 +198,17 @@ onUnmounted(() => window.removeEventListener('popstate', onPopState))
                     <el-tag :type="outcomeType(check.outcome)" size="small" effect="plain">{{ outcomeText[check.outcome] }}</el-tag>
                   </li>
                 </ul>
+                <div v-if="item.judge_evidence" class="judge-evidence" :data-testid="`judge-evidence-${item.evaluator_id}`">
+                  <span>模型 {{ item.judge_evidence.resolved_model ?? item.judge_evidence.requested_model }}</span>
+                  <span>评审 {{ item.judge_evidence.samples }} 次 · {{ voteText(item.judge_evidence.votes) }}</span>
+                  <span v-if="item.judge_evidence.truncated" class="judge-warn">输出被截断</span>
+                  <span v-if="item.judge_evidence.input_tokens !== null">Token {{ item.judge_evidence.input_tokens }}/{{ item.judge_evidence.output_tokens }}</span>
+                  <span>Prompt {{ item.judge_evidence.prompt_sha256.slice(0, 8) }} · Rubric {{ item.judge_evidence.rubric_sha256.slice(0, 8) }}</span>
+                </div>
+                <div v-if="item.error_evidence" class="judge-evidence judge-warn" :data-testid="`error-evidence-${item.evaluator_id}`">
+                  <span>评估器未能完成检查（{{ item.error_evidence.category }}）</span>
+                  <span v-if="item.error_evidence.retryable">可重试</span>
+                </div>
                 <button v-if="item.outcome === 'fail'" class="trace-link" @click="openTrace(item.case_id)">查看失败轨迹 →</button>
               </div>
             </article>

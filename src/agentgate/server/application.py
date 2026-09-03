@@ -20,6 +20,9 @@ class LaunchRequest(BaseModel):
     dataset_id: str
     dataset_version: int = Field(ge=1)
     evaluator_ids: list[str] | None = None
+    #: Which judge key to use, by catalogue id. Never a key itself. Omitted
+    #: means the demo judge, which needs no credential.
+    judge_credential: str | None = None
 
 
 class CreateDatasetRequest(BaseModel):
@@ -231,6 +234,11 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
     def evaluators():
         return service.evaluators()
 
+    @api.get("/judge-credentials")
+    def judge_credentials():
+        """Selectable judge keys, by reference and availability only."""
+        return service.judge_credentials()
+
     @api.get("/runs")
     def runs():
         return repository.list_runs()
@@ -243,6 +251,7 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
                 request.dataset_id,
                 request.dataset_version,
                 request.evaluator_ids,
+                request.judge_credential,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
