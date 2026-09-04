@@ -1,20 +1,21 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { api, type DatasetOption, type EvaluatorKind, type EvaluatorOption, type JudgeCredential, type Overview, type Report, type Run, type Trace, type Version } from './api/client'
+import { api, type DatasetOption, type EvaluatorKind, type EvaluatorOption, type Overview, type Report, type Run, type Trace, type Version } from './api/client'
 import DatasetWorkspace from './pages/DatasetWorkspace.vue'
+import { includeEvaluatorPrerequisites } from './state/evaluators'
+import { useJudgeProviderState } from './state/judgeProvider'
 
 const overview = ref<Overview>({ total_runs: 0, completed_runs: 0, case_count: 0, latest: null })
 const versions = ref<Version[]>([])
 const datasets = ref<DatasetOption[]>([])
 const evaluators = ref<EvaluatorOption[]>([])
-const judgeCredentials = ref<JudgeCredential[]>([])
 const runs = ref<Run[]>([])
 const selectedVersion = ref('loan-agent-v2-fixed')
-const selectedDataset = ref('loan-risk-policy')
+const selectedDataset = ref('loan-agent-demo')
+const selectedCaseIds = ref<string[]>([])
 const selectedEvaluators = ref<string[]>([])
-/** null = the demo judge, which needs no key. */
-const selectedJudgeCredential = ref<string|null>(null)
+const { judgeService, judgeModel, judgeApiKey, judgeBaseUrl } = useJudgeProviderState()
 const report = ref<Report|null>(null)
 const trace = ref<Trace|null>(null)
 const loading = ref(false)
@@ -29,35 +30,88 @@ const kindsInUse = computed(() => new Set(
   evaluators.value.filter(item => selectedEvaluators.value.includes(item.id)).map(item => item.kind)
 ))
 const judgeSelected = computed(() => kindsInUse.value.has('llm_judge'))
+const judgeProviderReady = computed(() =>
+  Boolean(
+    judgeModel.value.trim()
+    && judgeApiKey.value
+    && (judgeService.value !== 'custom' || judgeBaseUrl.value.trim()),
+  ),
+)
 const evaluatorById = computed(() => Object.fromEntries(evaluators.value.map(item => [item.id, item])))
 
 async function refresh() {
-  const [summary, targetVersions, datasetOptions, evaluatorOptions, credentials, recentRuns] = await Promise.all([
-    api.overview(), api.versions(), api.datasets(), api.evaluators(), api.judgeCredentials(), api.runs(),
+  const [summary, targetVersions, datasetOptions, evaluatorOptions, recentRuns] = await Promise.all([
+    api.overview(), api.versions(), api.datasets(), api.evaluators(), api.runs(),
   ])
   overview.value = summary
   versions.value = targetVersions
   datasets.value = datasetOptions
   evaluators.value = evaluatorOptions
-  judgeCredentials.value = credentials
   runs.value = recentRuns
+  const availableCaseIds = new Set(selectedDatasetInfo.value?.cases.map(item => item.id) ?? [])
+  selectedCaseIds.value = selectedCaseIds.value.filter(id => availableCaseIds.has(id))
+  if (selectedCaseIds.value.length === 0) {
+    selectedCaseIds.value = [...availableCaseIds]
+  }
   if (selectedEvaluators.value.length === 0) selectedEvaluators.value = evaluatorOptions.map(item => item.id)
   if (!report.value && summary.latest) report.value = summary.latest
 }
 
 async function launch() {
   if (selectedEvaluators.value.length === 0) return ElMessage.warning('请至少选择一个评估器')
+  if (selectedCaseIds.value.length === 0) return ElMessage.warning('请至少选择一个 Case')
   if (selectedDatasetInfo.value?.version == null) return ElMessage.warning('请选择已有发布版本的测评集')
+  if (judgeSelected.value && !judgeProviderReady.value) return ElMessage.warning('请填写完整的 Judge 模型配置')
   loading.value = true
   try {
-    const run = await api.launch(selectedVersion.value, selectedDataset.value, selectedDatasetInfo.value.version, selectedEvaluators.value, judgeSelected.value ? selectedJudgeCredential.value : null)
+    const run = await api.launch(
+      selectedVersion.value,
+      selectedDataset.value,
+      selectedDatasetInfo.value.version,
+      selectedEvaluators.value,
+      judgeSelected.value ? {
+        provider: judgeService.value,
+        model: judgeModel.value.trim(),
+        api_key: judgeApiKey.value,
+        base_url: judgeService.value === 'custom' ? judgeBaseUrl.value.trim() : null,
+      } : null,
+      selectedCaseIds.value,
+    )
     report.value = await api.report(run.id)
     await refresh()
     document.querySelector('#result-report')?.scrollIntoView({ behavior: 'smooth' })
     ElMessage.success('评估已完成，指标与证据已持久化')
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '评估失败')
-  } finally { loading.value = false }
+  } finally {
+    loading.value = false
+  }
+}
+
+function normalizeEvaluatorSelection(ids: string[]) {
+  const normalized = includeEvaluatorPrerequisites(ids, evaluators.value)
+  selectedEvaluators.value = normalized.ids
+  if (normalized.added.length) {
+    const names = normalized.added.map(id => evaluatorById.value[id]?.name ?? id)
+    ElMessage.info(`已自动选择前置评估器：${names.join('、')}`)
+  }
+}
+
+function selectDatasetCases() {
+  selectedCaseIds.value = selectedDatasetInfo.value?.cases.map(item => item.id) ?? []
+}
+
+function selectJudgeService() {
+  if (judgeService.value === 'deepseek') judgeModel.value = 'deepseek-v4-pro'
+  else if (judgeService.value === 'openai') judgeModel.value = 'gpt-5-mini'
+  else judgeModel.value = ''
+}
+
+function pasteJudgeApiKey(event: ClipboardEvent) {
+  const value = event.clipboardData?.getData('text')
+  if (value === undefined) return
+  event.preventDefault()
+  judgeApiKey.value = value.trim()
 }
 
 async function openRun(id: string) { report.value = await api.report(id); trace.value = null }
@@ -118,10 +172,16 @@ onUnmounted(() => window.removeEventListener('popstate', onPopState))
 
           <article class="config-card">
             <div class="card-index">D</div><label>Dataset</label>
-            <el-select v-model="selectedDataset" data-testid="dataset-select" aria-label="数据集">
+            <el-select v-model="selectedDataset" data-testid="dataset-select" aria-label="数据集" @change="selectDatasetCases">
               <el-option v-for="item in datasets" :key="item.id" :label="`${item.name} · v${item.version}`" :value="item.id" />
             </el-select>
             <p>{{ selectedDatasetInfo?.description }} · {{ selectedDatasetInfo?.case_count ?? 0 }} 个用例</p>
+            <label class="case-select-label">Cases</label>
+            <el-checkbox-group v-model="selectedCaseIds" class="case-select-list" aria-label="运行用例">
+              <el-checkbox v-for="item in selectedDatasetInfo?.cases ?? []" :key="item.id" :value="item.id">
+                {{ item.name }}
+              </el-checkbox>
+            </el-checkbox-group>
           </article>
 
           <article class="config-card evaluator-card">
@@ -131,7 +191,7 @@ onUnmounted(() => window.removeEventListener('popstate', onPopState))
                 {{ kindText[kind] }}<template v-if="!evaluators.some(item => item.kind === kind)"> · 未配置</template>
               </span>
             </div>
-            <el-checkbox-group v-model="selectedEvaluators" class="evaluator-list">
+            <el-checkbox-group v-model="selectedEvaluators" class="evaluator-list" @change="normalizeEvaluatorSelection">
               <el-checkbox v-for="item in evaluators" :key="item.id" :value="item.id" border>
                 <span class="eval-name">
                   {{ item.name }}
@@ -145,23 +205,33 @@ onUnmounted(() => window.removeEventListener('popstate', onPopState))
                 </small>
               </el-checkbox>
             </el-checkbox-group>
-            <div v-if="judgeSelected" class="judge-key" data-testid="judge-key">
-              <label>LLM 评估器 Key</label>
-              <el-select v-model="selectedJudgeCredential" aria-label="评估 Key" clearable placeholder="内置演示评审（无需 Key）">
-                <el-option
-                  v-for="item in judgeCredentials" :key="item.id" :value="item.id"
-                  :label="item.available ? item.label : `${item.label}（未配置）`"
-                  :disabled="!item.available"
+            <div v-if="judgeSelected" class="judge-key" data-testid="judge-provider">
+              <label>Judge 模型配置</label>
+              <div class="judge-provider-fields">
+                <el-select v-model="judgeService" aria-label="模型服务商" @change="selectJudgeService">
+                  <el-option label="DeepSeek" value="deepseek" />
+                  <el-option label="OpenAI" value="openai" />
+                  <el-option label="自定义服务" value="custom" />
+                </el-select>
+                <el-input v-model="judgeModel" aria-label="Judge Model" placeholder="模型名称" />
+                <input
+                  v-model="judgeApiKey"
+                  class="judge-secret-input"
+                  type="password"
+                  autocomplete="new-password"
+                  aria-label="Judge API Key"
+                  placeholder="API Key"
+                  @paste="pasteJudgeApiKey"
                 />
-              </el-select>
-              <small>仅传递 Key 引用，明文不会进入任务、接口或日志。</small>
+                <el-input v-if="judgeService === 'custom'" v-model="judgeBaseUrl" aria-label="API Base URL" placeholder="API Base URL，例如 https://host/v1" />
+              </div>
             </div>
           </article>
         </div>
 
         <div class="launch-bar">
           <div><b>{{ selectedEvaluators.length }}</b> 个评估器已启用 <span>· 结果将写入 SQLite</span></div>
-          <el-button type="primary" size="large" :loading="loading" :disabled="selectedEvaluators.length === 0" @click="launch">运行评估 <span>→</span></el-button>
+          <el-button type="primary" size="large" :loading="loading" :disabled="selectedEvaluators.length === 0 || (judgeSelected && !judgeProviderReady)" @click="launch">运行评估 <span>→</span></el-button>
         </div>
       </section>
 

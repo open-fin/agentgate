@@ -63,7 +63,7 @@ Current capabilities:
   sample responses, and finish reason are persisted as Judge evidence;
 - required PII/credential redaction before any Case or Trace material is sent to the
   Judge provider; and
-- a deterministic Demo Judge and a programmable Fake Judge for offline tests.
+- a programmable Fake Judge for offline unit tests without network calls.
 
 There is deliberately no in-memory Judge response cache. In the current synchronous
 one-evaluation-per-Case execution flow it has negligible hit rate, cannot survive a
@@ -74,8 +74,11 @@ future retry/recovery feature must use persistent, Attempt-scoped completion rec
 
 `integrations/model_providers/openai_compatible.py` implements the current external
 provider adapter. It uses bounded HTTP retries for temporary provider failures and
-records no plaintext secret in domain data. The POC resolves credential references of
-the form `env:NAME`; the control panel can choose its public or private *reference*.
+records no plaintext secret in domain data. The CLI resolves credential references of
+the form `env:NAME`. The Web UI selects a model service and accepts its model and API
+Key for one request. Known services supply their endpoint internally; only the custom
+service option exposes an advanced API Base URL field. The password input is cleared
+after the request and its value is never copied into a Run, Result, or SQLite record.
 
 The provider boundary owns HTTP, authentication, timeout, retry, and usage parsing.
 Prompt construction and Judge verdict parsing remain in `evaluator/judge/`.
@@ -89,10 +92,13 @@ default evaluator set and has no evaluator-management UI yet.
 
 ### Demo and UI
 
-The loan demo contains a version that takes the correct action but makes a misleading
-customer-facing statement. Rules pass while the semantic Judge fails, demonstrating
-the intended Judge boundary. The UI can select a Judge credential reference and shows
-Judge model, votes, token usage, prompt/rubric hashes, and error evidence.
+The in-process Python loan demo has five independently runnable Cases covering loan approval, repayment-plan
+generation, complaint intake, and credit inquiry. One target version takes the correct
+high-risk action but makes a misleading customer-facing statement. Rules pass while a
+real semantic Judge can fail it, demonstrating the intended Judge boundary. Selecting
+an LLM Judge requires a configured real model service. The UI accepts its service,
+model, and request-scoped API Key, and shows Judge model, votes, token usage, prompt/rubric
+hashes, and error evidence. No HTTP Target is included in this demo.
 
 ## Deliberate boundaries
 
@@ -154,3 +160,23 @@ cd web && npm run typecheck
 The Judge path has focused tests for phase ordering, prerequisites, contract failures,
 provider retries, credential references, redaction, sampling/voting, evidence, and
 snapshot provenance.
+
+## Run the loan demo with a real Judge
+
+Configure an OpenAI-compatible provider and select its credential catalogue ID:
+
+```bash
+read -s "AGENTGATE_JUDGE_API_KEY?Judge API Key: "
+echo
+export AGENTGATE_JUDGE_API_KEY
+export AGENTGATE_JUDGE_ENDPOINT=https://api.deepseek.com/chat/completions
+export AGENTGATE_JUDGE_MODEL=deepseek-v4-pro
+
+agentgate evaluate --version loan-agent-v3-misleading \
+  --judge-credential public --database ./agentgate.db
+```
+
+The CLI uses the selected credential reference. In the Web UI, select DeepSeek or
+OpenAI and enter the model and API Key; a Base URL is required only for a custom
+OpenAI-compatible service. Runs may select one or more Cases. Runs that select only
+Rule evaluators do not require any Judge model configuration.

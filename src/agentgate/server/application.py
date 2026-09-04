@@ -2,17 +2,42 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import AnyHttpUrl, BaseModel, Field, SecretStr, model_validator
 
 from agentgate.case import DatasetExport, DatasetValidationError
 from agentgate.control_plane import EvaluationService
 from agentgate.domain import Case
+from agentgate.evaluator.models import EvaluatorError, MissingEvaluatorDependency
 from agentgate.storage.sqlite import SQLiteRepository
 from agentgate.trace.receivers.otlp_http import ingest_otlp_http_json
+
+
+class JudgeProviderRequest(BaseModel):
+    provider: Literal["deepseek", "openai", "custom"] = "deepseek"
+    model: str = Field(min_length=1)
+    api_key: SecretStr = Field(min_length=1)
+    base_url: AnyHttpUrl | None = None
+
+    @model_validator(mode="after")
+    def custom_requires_base_url(self) -> "JudgeProviderRequest":
+        if self.provider == "custom" and self.base_url is None:
+            raise ValueError("custom model service requires an API Base URL")
+        return self
+
+    def completion_endpoint(self) -> str:
+        if self.provider == "deepseek":
+            return "https://api.deepseek.com/chat/completions"
+        if self.provider == "openai":
+            return "https://api.openai.com/v1/chat/completions"
+        base_url = str(self.base_url).rstrip("/")
+        return (
+            base_url if base_url.endswith("/chat/completions")
+            else f"{base_url}/chat/completions"
+        )
 
 
 class LaunchRequest(BaseModel):
@@ -20,9 +45,13 @@ class LaunchRequest(BaseModel):
     dataset_id: str
     dataset_version: int = Field(ge=1)
     evaluator_ids: list[str] | None = None
-    #: Which judge key to use, by catalogue id. Never a key itself. Omitted
-    #: means the demo judge, which needs no credential.
+    case_ids: list[str] | None = None
+    #: CLI/server-side credential catalogue option. The browser instead sends
+    #: one request-scoped judge_provider object below.
     judge_credential: str | None = None
+    #: Browser-supplied, request-scoped provider configuration. The API key is
+    #: consumed by the transport and never copied into a Run or Result.
+    judge_provider: JudgeProviderRequest | None = None
 
 
 class CreateDatasetRequest(BaseModel):
@@ -246,13 +275,29 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
     @api.post("/evaluations", status_code=201)
     def launch(request: LaunchRequest):
         try:
+            inline = request.judge_provider
             return service.launch(
                 request.version,
                 request.dataset_id,
                 request.dataset_version,
                 request.evaluator_ids,
                 request.judge_credential,
+                judge_provider_name=inline.provider if inline else None,
+                judge_endpoint=inline.completion_endpoint() if inline else None,
+                judge_model=inline.model if inline else None,
+                judge_api_key=inline.api_key.get_secret_value() if inline else None,
+                case_ids=request.case_ids,
             )
+        except MissingEvaluatorDependency as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"评估器配置缺少依赖项：{exc}",
+            ) from exc
+        except EvaluatorError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"评估器配置无效：{exc}",
+            ) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 

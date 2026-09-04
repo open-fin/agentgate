@@ -18,10 +18,13 @@ def _service(database: Path | None = None) -> EvaluationService:
 
 @app.command()
 def evaluate(version: str = typer.Option("loan-agent-v2-fixed", help="目标代理版本"),
-             database: Path | None = typer.Option(None, help="SQLite 数据库路径")) -> None:
+             database: Path | None = typer.Option(None, help="SQLite 数据库路径"),
+             judge_credential: str = typer.Option(
+                 "public", help="LLM Judge 凭证目录 ID（public/private）",
+             )) -> None:
     """运行贷款审批演示数据集。"""
     service = _service(database)
-    run = service.launch(version)
+    run = service.launch(version, judge_credential=judge_credential)
     report = service.run_detail(run.id)
     typer.echo(json.dumps({
         "run_id": run.id,

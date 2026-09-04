@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 
 from agentgate.case import DatasetService
-from agentgate.demo.judge import DemoJudgeModel
 from agentgate.demo.loan import LOAN_DATASET, LOAN_DATASET_VERSION, LoanAgent
 from agentgate.domain import LlmJudgeEvaluatorSpec
 from agentgate.evaluator import EVALUATORS, EvaluationContext
@@ -58,13 +57,11 @@ class EvaluationService:
         ]
 
     def _judge_model(self, credential_id: str | None):
-        """Pick the judge client, and the identity the Run will record for it.
-
-        Without a selected key the demo stand-in runs, which is what keeps a
-        fresh checkout able to evaluate the judge path with no configuration.
-        """
+        """Build the selected real Judge client and its snapshotted identity."""
         if credential_id is None:
-            return DemoJudgeModel(), None
+            raise ValueError(
+                "judge_credential is required when an LLM Judge is selected"
+            )
         entry = next(
             (item for item in JUDGE_CREDENTIALS if item["id"] == credential_id), None
         )
@@ -87,14 +84,29 @@ class EvaluationService:
         }
 
     @staticmethod
-    def _with_judge_identity(evaluators: tuple, identity: dict | None) -> tuple:
-        """Record the provider actually used, not the one the default declared.
+    def _inline_judge_model(
+        provider: str, endpoint: str, model: str, api_key: str,
+    ):
+        """Build a request-scoped Judge without persisting its plaintext key."""
+        endpoint = endpoint.strip()
+        model = model.strip()
+        if not endpoint or not model or not api_key:
+            raise ValueError("judge provider endpoint, model, and api_key are required")
+        client = OpenAICompatibleJudgeModel(endpoint=endpoint, api_key=api_key)
+        return client, {
+            "provider": provider,
+            "model": model,
+            # An inline key has no replayable reference and must never enter a snapshot.
+            "credential_ref": None,
+        }
+
+    @staticmethod
+    def _with_judge_identity(evaluators: tuple, identity: dict) -> tuple:
+        """Record the provider and model actually selected for this Run.
 
         The RunSnapshot is the audit record of how a verdict was reached, so it
-        must not keep claiming the demo judge when a real one was called.
+        must contain launch-time provider identity rather than catalogue placeholders.
         """
-        if identity is None:
-            return evaluators
         return tuple(
             spec.model_copy(update={"judge": spec.judge.model_copy(update=identity)})
             if isinstance(spec, LlmJudgeEvaluatorSpec) else spec
@@ -105,6 +117,9 @@ class EvaluationService:
         self, version: str, dataset_id: str | None = None,
         dataset_version: int | None = None, evaluator_ids: list[str] | None = None,
         judge_credential: str | None = None,
+        *, judge_provider_name: str | None = None, judge_endpoint: str | None = None,
+        judge_model: str | None = None, judge_api_key: str | None = None,
+        case_ids: list[str] | None = None,
     ):
         dataset_id = dataset_id or LOAN_DATASET.id
         dataset = (
@@ -121,12 +136,38 @@ class EvaluationService:
         if unknown:
             raise ValueError(f"unknown evaluators: {', '.join(sorted(unknown))}")
 
-        judge_model, identity = self._judge_model(judge_credential)
-        selected = self._with_judge_identity(selected, identity)
+        judge_specs = tuple(
+            item for item in selected if isinstance(item, LlmJudgeEvaluatorSpec)
+        )
+        inline_values = (judge_provider_name, judge_endpoint, judge_model, judge_api_key)
+        has_inline = any(value is not None for value in inline_values)
+        context = None
+        if judge_specs:
+            if judge_credential is not None and has_inline:
+                raise ValueError(
+                    "judge_credential and inline judge provider are mutually exclusive"
+                )
+            if has_inline:
+                if not all(value is not None for value in inline_values):
+                    raise ValueError(
+                        "judge provider, endpoint, model, and api_key must be provided together"
+                    )
+                judge_client, identity = self._inline_judge_model(
+                    judge_provider_name, judge_endpoint, judge_model, judge_api_key
+                )
+            else:
+                judge_client, identity = self._judge_model(judge_credential)
+            selected = self._with_judge_identity(selected, identity)
+            context = EvaluationContext(judge_client=judge_client)
+        elif judge_credential is not None or has_inline:
+            raise ValueError(
+                "judge provider cannot be used without an LLM Judge evaluator"
+            )
         return self.engine.run(
             dataset, LoanAgent(self.repository), version, evaluators=selected,
-            context=EvaluationContext(judge_client=judge_model),
+            context=context,
             credentials=self.credentials,
+            case_ids=tuple(case_ids) if case_ids is not None else None,
         )
 
     def overview(self) -> dict:
@@ -166,6 +207,16 @@ class EvaluationService:
                 **dataset.model_dump(mode="json"),
                 "version": latest.version if latest else None,
                 "case_count": len(latest.cases) if latest else 0,
+                "cases": [
+                    {
+                        "id": case.id,
+                        "name": case.name,
+                        "tags": list(case.tags),
+                        "category": case.category,
+                        "difficulty": case.difficulty,
+                    }
+                    for case in latest.cases
+                ] if latest else [],
                 "has_draft": draft is not None,
             })
         return summaries

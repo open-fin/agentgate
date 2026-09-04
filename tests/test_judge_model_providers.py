@@ -192,6 +192,26 @@ def test_credential_is_sent_but_never_appears_in_repr(monkeypatch):
     assert "env:JUDGE_KEY" in repr(client)
 
 
+def test_inline_credential_is_request_scoped_and_never_appears_in_repr(monkeypatch):
+    seen = patch_urlopen(monkeypatch, lambda _n: envelope())
+    client = OpenAICompatibleJudgeModel(
+        endpoint="https://api.example/v1", api_key=SECRET
+    )
+    client.complete(request())
+    assert seen[0][0].headers["Authorization"] == f"Bearer {SECRET}"
+    assert SECRET not in repr(client)
+    assert "credential_ref=None" in repr(client)
+
+
+def test_inline_and_referenced_credentials_are_mutually_exclusive():
+    with pytest.raises(ValueError, match="either credential_ref or api_key"):
+        OpenAICompatibleJudgeModel(
+            endpoint="https://api.example/v1",
+            credential_ref="env:JUDGE_KEY",
+            api_key=SECRET,
+        )
+
+
 def test_missing_credential_fails_at_composition_not_mid_run(monkeypatch):
     monkeypatch.delenv("JUDGE_KEY", raising=False)
     with pytest.raises(CredentialUnavailable):

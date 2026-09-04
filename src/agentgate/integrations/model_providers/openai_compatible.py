@@ -45,12 +45,15 @@ class OpenAICompatibleJudgeModel:
         endpoint: str,
         credential_ref: str | None = None,
         resolver: CredentialResolver | None = None,
+        api_key: str | None = None,
         max_attempts: int = 3,
         backoff_seconds: float = 0.5,
         sleep=time.sleep,
     ) -> None:
         if max_attempts < 1:
             raise ValueError("max_attempts must be at least 1")
+        if credential_ref and api_key:
+            raise ValueError("provide either credential_ref or api_key, not both")
         self.endpoint = endpoint
         self.credential_ref = credential_ref
         self.max_attempts = max_attempts
@@ -58,7 +61,7 @@ class OpenAICompatibleJudgeModel:
         self._sleep = sleep
         # Resolved once so a missing secret fails at composition time rather than
         # mid-Run. Stored privately and kept out of __repr__.
-        self._api_key = (
+        self._api_key = api_key or (
             (resolver or EnvCredentialResolver()).resolve(credential_ref)
             if credential_ref else None
         )

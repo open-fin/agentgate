@@ -3,7 +3,10 @@ import sqlite3
 
 import pytest
 
-from agentgate.domain import Case, CaseTurn, GateSpec, MetricPlan, Run, RunSnapshot, TargetSnapshot
+from agentgate.domain import (
+    Case, CaseTurn, GateSpec, MetricPlan, Run, RunSnapshot, TargetSnapshot,
+    content_sha256,
+)
 from agentgate.demo.loan import LOAN_DATASET_VERSION
 from agentgate.evaluator import EVALUATORS
 from agentgate.storage.sqlite import SQLiteRepository
@@ -26,6 +29,16 @@ def test_snapshot_is_deeply_immutable_and_hash_is_stable():
     assert first.snapshot_sha256 == second.snapshot_sha256
     with pytest.raises(TypeError):
         first.dataset.cases[0].turns[0].input["risk"] = "low"
+
+
+def test_snapshots_from_before_case_selection_remain_readable():
+    payload = snapshot().model_dump(mode="json")
+    payload.pop("selected_case_ids")
+    payload["snapshot_sha256"] = content_sha256({
+        key: value for key, value in payload.items() if key != "snapshot_sha256"
+    })
+    restored = RunSnapshot.model_validate(payload)
+    assert restored.selected_case_ids == ()
 
 
 def test_mutating_source_data_cannot_change_domain_content():

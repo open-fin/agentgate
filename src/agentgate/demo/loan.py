@@ -97,23 +97,150 @@ LOW_RISK_CASE = Case(
     notes="验证低风险直批路径，以及答复与决策的一致性。",
 )
 
+REPAYMENT_PLAN_CASE = Case(
+    id="repayment-plan-standard",
+    name="标准还款计划生成",
+    category=CaseCategory.POSITIVE,
+    difficulty=CaseDifficulty.MEDIUM,
+    initial_state={},
+    turns=(
+        CaseTurn(
+            id="repayment-plan-turn-1",
+            input={
+                "skill": "repayment_plan", "application_id": "A-300",
+                "amount": 120000, "months": 24,
+            },
+            expected_skill="repayment_plan",
+            expectations=(
+                ToolArgumentExpectation(
+                    id="expect-repayment-amount-argument",
+                    tool="repayment_plan", path="amount",
+                    condition=Equals(expected=120000),
+                ),
+                StateExpectation(
+                    id="expect-monthly-amount", path="monthly_amount",
+                    condition=Equals(expected=5000.0),
+                ),
+                StateExpectation(
+                    id="expect-installments", path="installments",
+                    condition=Equals(expected=24),
+                ),
+                OutputExpectation(
+                    id="expect-repayment-message", path="message",
+                    condition=Equals(expected="还款计划已生成"),
+                ),
+                OutputExpectation(
+                    id="expect-repayment-output-monthly-amount", path="monthly_amount",
+                    condition=Equals(expected=5000.0),
+                ),
+            ),
+            required_tools=("repayment_plan",),
+            forbidden_tools=("approve_loan", "request_human_review"),
+            notes="标准还款计划请求应生成正确的分期与月供。",
+        ),
+    ),
+    tags=("repayment_plan",),
+    notes="验证还款计划技能的工具调用与最终状态。",
+)
+
+COMPLAINT_CASE = Case(
+    id="complaint-standard",
+    name="标准投诉受理",
+    category=CaseCategory.POSITIVE,
+    difficulty=CaseDifficulty.MEDIUM,
+    initial_state={},
+    turns=(
+        CaseTurn(
+            id="complaint-turn-1",
+            input={
+                "skill": "complaint", "application_id": "A-400",
+                "message": "扣款金额与合同不符",
+            },
+            expected_skill="complaint",
+            expectations=(
+                ToolArgumentExpectation(
+                    id="expect-complaint-message-argument",
+                    tool="complaint", path="message",
+                    condition=Equals(expected="扣款金额与合同不符"),
+                ),
+                StateExpectation(
+                    id="expect-complaint-status", path="status",
+                    condition=Equals(expected="open"),
+                ),
+                OutputExpectation(
+                    id="expect-complaint-output-status", path="status",
+                    condition=Equals(expected="open"),
+                ),
+            ),
+            required_tools=("complaint",),
+            forbidden_tools=("approve_loan", "request_human_review"),
+            notes="投诉请求应被受理并置于待处理状态。",
+        ),
+    ),
+    tags=("complaint",),
+    notes="验证投诉技能的工具调用与最终状态。",
+)
+
+CREDIT_INQUIRY_CASE = Case(
+    id="credit-inquiry-standard",
+    name="标准征信查询",
+    category=CaseCategory.POSITIVE,
+    difficulty=CaseDifficulty.MEDIUM,
+    initial_state={},
+    turns=(
+        CaseTurn(
+            id="credit-inquiry-turn-1",
+            input={
+                "skill": "credit_inquiry", "application_id": "A-500", "risk": "medium",
+            },
+            expected_skill="credit_inquiry",
+            expectations=(
+                ToolArgumentExpectation(
+                    id="expect-credit-inquiry-application-id",
+                    tool="credit_inquiry", path="application_id",
+                    condition=Equals(expected="A-500"),
+                ),
+                StateExpectation(
+                    id="expect-credit-inquiry-risk", path="risk",
+                    condition=Equals(expected="medium"),
+                ),
+                OutputExpectation(
+                    id="expect-credit-inquiry-output-risk", path="risk",
+                    condition=Equals(expected="medium"),
+                ),
+            ),
+            required_tools=("credit_inquiry",),
+            forbidden_tools=("approve_loan", "request_human_review"),
+            notes="独立征信查询请求应返回风险等级。",
+        ),
+    ),
+    tags=("credit_inquiry",),
+    notes="验证征信查询技能的工具调用与最终状态。",
+)
+
 LOAN_DATASET = Dataset(
-    id="loan-risk-policy",
-    name="贷款审批评估",
-    description="覆盖高风险人工复核、低风险直批，以及答复与决策的一致性",
+    id="loan-agent-demo",
+    name="贷款代理能力评估",
+    description="覆盖贷款审批、征信查询、还款计划、投诉处理，以及答复与决策的一致性",
     created_at=DEMO_CREATED_AT,
     updated_at=DEMO_CREATED_AT,
 )
 
 LOAN_DATASET_VERSION = DatasetVersion(
-    id="loan-risk-policy-v1",
+    id="loan-agent-demo-v1",
     dataset_id=LOAN_DATASET.id,
     dataset_name=LOAN_DATASET.name,
     dataset_description=LOAN_DATASET.description,
     version=1,
     status=DatasetVersionStatus.PUBLISHED,
-    cases=(HIGH_RISK_CASE, LOW_RISK_CASE),
-    notes="AgentGate deterministic loan demo",
+    cases=(
+        HIGH_RISK_CASE,
+        LOW_RISK_CASE,
+        REPAYMENT_PLAN_CASE,
+        COMPLAINT_CASE,
+        CREDIT_INQUIRY_CASE,
+    ),
+    notes="AgentGate deterministic loan agent demo",
     created_at=DEMO_CREATED_AT,
     updated_at=DEMO_CREATED_AT,
     published_at=DEMO_CREATED_AT,

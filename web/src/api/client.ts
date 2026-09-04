@@ -31,12 +31,11 @@ export interface EvaluatorOption {
   prerequisites: PrerequisiteSummary[]
   judge: JudgeSummary|null
 }
-/** A selectable judge key. Carries the reference and availability, never a key. */
-export interface JudgeCredential {
-  id: string
-  label: string
-  credential_ref: string
-  available: boolean
+export interface JudgeProviderInput {
+  provider: 'deepseek'|'openai'|'custom'
+  model: string
+  api_key: string
+  base_url?: string|null
 }
 export interface Run {
   id: string
@@ -44,6 +43,7 @@ export interface Run {
   snapshot: {
     target: { version: string }
     dataset: DatasetVersion
+    selected_case_ids: string[]
     evaluator_specs: EvaluatorOption[]
   }
 }
@@ -159,10 +159,15 @@ export class ApiError extends Error {
   detail: unknown
 
   constructor(status: number, detail: unknown) {
+    const fallback = status >= 500
+      ? '服务端执行失败，请查看启动终端中的错误日志'
+      : `请求失败（HTTP ${status}）`
     super(
       Array.isArray(detail)
         ? detail.map(item => item?.message ?? JSON.stringify(item)).join('；')
-        : String(detail ?? `HTTP ${status}`)
+        : typeof detail === 'string' && detail !== `HTTP ${status}`
+          ? detail
+          : fallback
     )
     this.status = status
     this.detail = detail
@@ -184,14 +189,14 @@ export const api = {
   versions: () => request<Version[]>('/api/versions'),
   datasets: () => request<DatasetSummary[]>('/api/datasets'),
   evaluators: () => request<EvaluatorOption[]>('/api/evaluators'),
-  judgeCredentials: () => request<JudgeCredential[]>('/api/judge-credentials'),
   runs: () => request<Run[]>('/api/runs'),
   launch: (
     version: string,
     datasetId: string,
     datasetVersion: number,
     evaluatorIds: string[],
-    judgeCredential: string|null = null,
+    judgeProvider: JudgeProviderInput|null = null,
+    caseIds: string[]|null = null,
   ) => request<Run>('/api/evaluations', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -200,7 +205,8 @@ export const api = {
       dataset_id: datasetId,
       dataset_version: datasetVersion,
       evaluator_ids: evaluatorIds,
-      judge_credential: judgeCredential,
+      judge_provider: judgeProvider,
+      case_ids: caseIds,
     }),
   }),
   report: (id: string) => request<Report>(`/api/runs/${id}`),

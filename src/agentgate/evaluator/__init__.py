@@ -63,6 +63,7 @@ EVALUATORS = (
     LlmJudgeEvaluatorSpec(
         id="answer-quality", name="回答质量", evaluator_type="answer_quality",
         dimension=Dimension.ANSWER, metric="answer_quality",
+        severity=Severity.BLOCKING,
         # Gated on policy: once an execution has already broken policy, paying a
         # model to grade its prose buys nothing. The gate is declared, not
         # inferred from policy-compliance being severity=blocking.
@@ -71,7 +72,7 @@ EVALUATORS = (
             policy=PrerequisitePolicy.ON_PASS_OR_REVIEW,
         ),),
         judge=JudgeConfig(
-            provider="demo", model="agentgate-demo-judge",
+            provider="openai_compatible", model="configured-at-launch",
             prompt=PromptSnapshot(
                 id="answer-quality-prompt", version="1", content=JUDGE_PROMPT,
             ),
