@@ -7,7 +7,10 @@ from agentgate.domain import (
     Case, DatasetVersion, DatasetVersionStatus, GateSpec, MetricPlan, Run, RunSnapshot,
     RunStatus, TargetSnapshot, Trace,
 )
-from agentgate.evaluator import EVALUATORS, evaluate_case, validate_evaluation_plan
+from agentgate.evaluator import (
+    EVALUATORS, EvaluationContext, evaluate_case, validate_evaluation_plan,
+)
+from agentgate.evaluator.judge import CredentialChecker
 from agentgate.result.service import build_report
 from agentgate.storage.base import AgentGateRepository
 
@@ -44,13 +47,37 @@ class RunEngine:
     def run(
         self, dataset: DatasetVersion, target: Target, target_version: str,
         provider: str = "deterministic", evaluators=EVALUATORS,
+        context: EvaluationContext | None = None,
+        credentials: CredentialChecker | None = None,
+        case_ids: tuple[str, ...] | None = None,
     ) -> Run:
         if dataset.status != DatasetVersionStatus.PUBLISHED:
             raise ValueError("only published Dataset versions can be evaluated")
         selected = tuple(evaluators)
-        validate_evaluation_plan(dataset, selected)
+        available = {case.id: case for case in dataset.cases}
+        selected_case_ids = tuple(available) if case_ids is None else case_ids
+        if not selected_case_ids:
+            raise ValueError("at least one Case is required")
+        if len(selected_case_ids) != len(set(selected_case_ids)):
+            raise ValueError("selected Case ids must be unique")
+        unknown_cases = set(selected_case_ids) - set(available)
+        if unknown_cases:
+            raise ValueError(f"unknown Cases: {', '.join(sorted(unknown_cases))}")
+        # Dataset order is stable regardless of the order submitted by a UI.
+        selected_case_id_set = set(selected_case_ids)
+        selected_cases = tuple(
+            case for case in dataset.cases if case.id in selected_case_id_set
+        )
+        selected_case_ids = tuple(case.id for case in selected_cases)
+        validation_dataset = DatasetVersion.model_validate({
+            **dataset.model_dump(mode="json"),
+            "cases": selected_cases,
+            "content_sha256": "",
+        })
+        validate_evaluation_plan(validation_dataset, selected, credentials)
         snapshot = RunSnapshot(
             dataset=dataset,
+            selected_case_ids=selected_case_ids,
             target=TargetSnapshot(
                 name="loan-agent", version=target_version, provider=provider
             ),
@@ -67,10 +94,12 @@ class RunEngine:
         self.repository.save_run(run)
         results = []
         try:
-            for case in dataset.cases:
+            for case in selected_cases:
                 trace = self.scheduler.execute(target, run.id, case, target_version)
                 self.repository.save_trace(trace)
-                results.extend(evaluate_case(case, trace, snapshot.evaluator_specs))
+                results.extend(
+                    evaluate_case(case, trace, snapshot.evaluator_specs, context)
+                )
             self.repository.save_results(results)
             completed = run.model_copy(update={
                 "status": RunStatus.COMPLETED,

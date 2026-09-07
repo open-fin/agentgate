@@ -24,7 +24,7 @@ class RequiredToolEvaluator(Evaluator):
     def applies_to(self, spec, turn) -> bool:
         return bool(turn.required_tools)
 
-    def evaluate(self, spec, turn, trace, resolve) -> Evaluation:
+    def evaluate(self, spec, turn, trace, resolve, context) -> Evaluation:
         spans = _tool_spans(trace)
         names = [item.name for item in spans]
         method = MethodRef(operator="contains_all", operator_version="1")
@@ -57,7 +57,7 @@ class ForbiddenToolEvaluator(Evaluator):
     def applies_to(self, spec, turn) -> bool:
         return bool(turn.forbidden_tools)
 
-    def evaluate(self, spec, turn, trace, resolve) -> Evaluation:
+    def evaluate(self, spec, turn, trace, resolve, context) -> Evaluation:
         spans = _tool_spans(trace)
         names = [item.name for item in spans]
         method = MethodRef(operator="contains_none", operator_version="1")
@@ -89,7 +89,7 @@ class ToolArgumentsEvaluator(Evaluator):
     def applies_to(self, spec, turn) -> bool:
         return any(isinstance(item, ToolArgumentExpectation) for item in turn.expectations)
 
-    def evaluate(self, spec, turn, trace, resolve) -> Evaluation:
+    def evaluate(self, spec, turn, trace, resolve, context) -> Evaluation:
         checks = []
         expectations = [
             item for item in turn.expectations if isinstance(item, ToolArgumentExpectation)

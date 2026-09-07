@@ -44,7 +44,8 @@ def test_multi_turn_session_produces_turn_aware_trace_and_checks(tmp_path):
 
     service = EvaluationService(repository)
     run = service.launch(
-        "loan-agent-v2-fixed", dataset.id, version.version
+        "loan-agent-v2-fixed", dataset.id, version.version,
+        evaluator_ids=["final-state", "final-output"],
     )
     trace = repository.get_trace(run.id, "multi-case")
     assert [item.turn_id for item in trace.turns] == ["collect", "decide"]

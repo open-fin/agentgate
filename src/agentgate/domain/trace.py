@@ -15,6 +15,14 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+#: Span attributes AgentGate writes for its own bookkeeping rather than to
+#: describe agent behaviour. They correlate spans to turns; they say nothing
+#: about what the agent did, so anything reasoning about behaviour -- an LLM
+#: Judge above all -- must ignore them.
+TURN_ID_ATTRIBUTE = "turn_id"
+INTERNAL_SPAN_ATTRIBUTES = frozenset({TURN_ID_ATTRIBUTE})
+
+
 class SpanKind(StrEnum):
     ROUTING = "routing"
     AGENT = "agent"
@@ -62,7 +70,8 @@ class Trace(DomainModel):
                 return self
             raise ValueError(f"trace has no outcome for turn {turn_id}")
         spans = tuple(
-            span for span in self.spans if span.attributes.get("turn_id") == turn_id
+            span for span in self.spans
+            if span.attributes.get(TURN_ID_ATTRIBUTE) == turn_id
         )
         return self.model_copy(update={
             "spans": spans,

@@ -12,7 +12,7 @@ class CrashingEvaluator(Evaluator):
     kind = Kind.RULE
     evaluator_type = "test_crash"
 
-    def evaluate(self, spec, turn, trace, resolve):
+    def evaluate(self, spec, turn, trace, resolve, context):
         raise RuntimeError("provider token=secret-value")
 
 
@@ -21,7 +21,7 @@ class TimeoutEvaluator(Evaluator):
     kind = Kind.RULE
     evaluator_type = "test_timeout"
 
-    def evaluate(self, spec, turn, trace, resolve):
+    def evaluate(self, spec, turn, trace, resolve, context):
         raise TimeoutError("too slow")
 
 
@@ -30,7 +30,7 @@ class MalformedEvaluator(Evaluator):
     kind = Kind.RULE
     evaluator_type = "test_malformed"
 
-    def evaluate(self, spec, turn, trace, resolve):
+    def evaluate(self, spec, turn, trace, resolve, context):
         return {"not": "an Evaluation"}
 
 
@@ -39,7 +39,7 @@ class HealthyEvaluator(Evaluator):
     kind = Kind.RULE
     evaluator_type = "test_healthy"
 
-    def evaluate(self, spec, turn, trace, resolve):
+    def evaluate(self, spec, turn, trace, resolve, context):
         return Evaluation(checks=())
 
 

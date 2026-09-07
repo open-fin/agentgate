@@ -35,6 +35,9 @@ class TargetSnapshot(DomainModel):
 
 class RunSnapshot(DomainModel):
     dataset: DatasetVersion
+    #: Exact Dataset Case ids executed by this Run, in Dataset order.
+    #: Empty is retained only for reading snapshots created before Case selection.
+    selected_case_ids: tuple[str, ...] = ()
     target: TargetSnapshot
     evaluator_specs: tuple[EvaluatorSpec, ...]
     primary_evaluator_ids: tuple[str, ...]
@@ -48,7 +51,12 @@ class RunSnapshot(DomainModel):
         payload = self.model_dump(mode="json", exclude={"snapshot_sha256"})
         expected = content_sha256(payload)
         if self.snapshot_sha256 and self.snapshot_sha256 != expected:
-            raise ValueError("RunSnapshot content hash mismatch")
+            # Backward compatibility for snapshots persisted before
+            # selected_case_ids became part of the hash.
+            legacy_payload = dict(payload)
+            legacy_payload.pop("selected_case_ids", None)
+            if self.selected_case_ids or self.snapshot_sha256 != content_sha256(legacy_payload):
+                raise ValueError("RunSnapshot content hash mismatch")
         if not self.snapshot_sha256:
             object.__setattr__(self, "snapshot_sha256", expected)
         return self

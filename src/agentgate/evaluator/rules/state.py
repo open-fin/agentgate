@@ -18,7 +18,7 @@ class FinalStateEvaluator(Evaluator):
     def applies_to(self, spec, turn) -> bool:
         return any(isinstance(item, StateExpectation) for item in turn.expectations)
 
-    def evaluate(self, spec, turn, trace, resolve) -> Evaluation:
+    def evaluate(self, spec, turn, trace, resolve, context) -> Evaluation:
         checks = []
         for expectation in (
             item for item in turn.expectations if isinstance(item, StateExpectation)

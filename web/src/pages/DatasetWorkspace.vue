@@ -7,6 +7,8 @@ import DatasetList from '../components/dataset/DatasetList.vue'
 import VersionSelector from '../components/dataset/VersionSelector.vue'
 import CaseTable from '../components/dataset/CaseTable.vue'
 import CaseEditor from '../components/dataset/CaseEditor.vue'
+import { includeEvaluatorPrerequisites } from '../state/evaluators'
+import { useJudgeProviderState } from '../state/judgeProvider'
 import type {
   DatasetExport, DatasetSummary, DatasetVersion, EvaluationCase, ValidationIssue,
 } from '../types/dataset'
@@ -23,6 +25,8 @@ const targetVersions = ref<Version[]>([])
 const evaluators = ref<EvaluatorOption[]>([])
 const selectedAgent = ref('loan-agent-v2-fixed')
 const selectedEvaluators = ref<string[]>([])
+const selectedRunCaseIds = ref<string[]>([])
+const { judgeService, judgeModel, judgeApiKey, judgeBaseUrl } = useJudgeProviderState()
 const busy = ref(false)
 const loading = ref(false)
 const validationIssues = ref<ValidationIssue[]>([])
@@ -39,6 +43,16 @@ const activeVersion = computed<DatasetVersion|null>(
 const editable = computed(() => activeVersion.value?.status === 'draft')
 const publishedVersions = computed(() => versions.value.filter(item => item.status === 'published'))
 const activeDataset = computed(() => datasets.value.find(item => item.id === activeDatasetId.value) ?? null)
+const judgeSelected = computed(() => evaluators.value.some(
+  item => item.kind === 'llm_judge' && selectedEvaluators.value.includes(item.id),
+))
+const judgeProviderReady = computed(() =>
+  Boolean(
+    judgeModel.value.trim()
+    && judgeApiKey.value
+    && (judgeService.value !== 'custom' || judgeBaseUrl.value.trim()),
+  ),
+)
 const activeCaseIssues = computed(() => {
   const caseIndex = activeVersion.value?.cases.findIndex(item => item.id === activeCaseId.value) ?? -1
   if (caseIndex < 0) return []
@@ -53,6 +67,7 @@ function chooseVersion(preferredId = '') {
     ?? null
   activeVersionId.value = selected?.id ?? ''
   selectFirstCase(selected)
+  selectedRunCaseIds.value = selected?.cases.map(item => item.id) ?? []
 }
 
 function selectFirstCase(version: DatasetVersion|null) {
@@ -289,6 +304,8 @@ async function importDataset(event: Event) {
 async function launchEvaluation() {
   if (!activeVersion.value?.version) return ElMessage.warning('只能运行已发布版本')
   if (!selectedEvaluators.value.length) return ElMessage.warning('请至少选择一个评估器')
+  if (!selectedRunCaseIds.value.length) return ElMessage.warning('请至少选择一个 Case')
+  if (judgeSelected.value && !judgeProviderReady.value) return ElMessage.warning('请填写完整的 Judge 模型配置')
   busy.value = true
   try {
     const run = await api.launch(
@@ -296,6 +313,13 @@ async function launchEvaluation() {
       activeDatasetId.value,
       activeVersion.value.version,
       selectedEvaluators.value,
+      judgeSelected.value ? {
+        provider: judgeService.value,
+        model: judgeModel.value.trim(),
+        api_key: judgeApiKey.value,
+        base_url: judgeService.value === 'custom' ? judgeBaseUrl.value.trim() : null,
+      } : null,
+      selectedRunCaseIds.value,
     )
     emit('runCreated', run)
     ElMessage.success('评估已完成，正在打开结果报告')
@@ -304,6 +328,28 @@ async function launchEvaluation() {
   } finally {
     busy.value = false
   }
+}
+
+function normalizeEvaluatorSelection(ids: string[]) {
+  const normalized = includeEvaluatorPrerequisites(ids, evaluators.value)
+  selectedEvaluators.value = normalized.ids
+  if (normalized.added.length) {
+    const byId = new Map(evaluators.value.map(item => [item.id, item.name]))
+    ElMessage.info(`已自动选择前置评估器：${normalized.added.map(id => byId.get(id) ?? id).join('、')}`)
+  }
+}
+
+function selectJudgeService() {
+  if (judgeService.value === 'deepseek') judgeModel.value = 'deepseek-v4-pro'
+  else if (judgeService.value === 'openai') judgeModel.value = 'gpt-5-mini'
+  else judgeModel.value = ''
+}
+
+function pasteJudgeApiKey(event: ClipboardEvent) {
+  const value = event.clipboardData?.getData('text')
+  if (value === undefined) return
+  event.preventDefault()
+  judgeApiKey.value = value.trim()
 }
 
 function showError(error: unknown, fallback: string) {
@@ -315,7 +361,7 @@ onMounted(async () => {
     const [agents, evaluatorItems] = await Promise.all([api.versions(), api.evaluators()])
     targetVersions.value = agents
     evaluators.value = evaluatorItems
-    selectedEvaluators.value = evaluatorItems.map(item => item.id)
+    selectedEvaluators.value = evaluatorItems.filter(item => item.kind === 'rule').map(item => item.id)
     await loadDatasets()
   } catch (error) {
     showError(error, '无法加载测评集')
@@ -399,10 +445,24 @@ onMounted(async () => {
       <el-select v-model="selectedAgent" data-testid="dataset-agent-select" aria-label="运行 Agent 版本">
         <el-option v-for="item in targetVersions" :key="item.id" :label="item.label" :value="item.id" />
       </el-select>
-      <el-select v-model="selectedEvaluators" multiple collapse-tags aria-label="运行评估器">
+      <el-select v-model="selectedEvaluators" multiple collapse-tags aria-label="运行评估器" @change="normalizeEvaluatorSelection">
         <el-option v-for="item in evaluators" :key="item.id" :label="item.name" :value="item.id" />
       </el-select>
-      <el-button type="primary" :disabled="activeVersion?.status !== 'published'" :loading="busy" data-testid="run-dataset-version" @click="launchEvaluation">运行此版本 →</el-button>
+      <el-select v-model="selectedRunCaseIds" multiple collapse-tags aria-label="运行用例">
+        <el-option v-for="item in activeVersion?.cases ?? []" :key="item.id" :label="item.name" :value="item.id" />
+      </el-select>
+      <el-button type="primary" :disabled="activeVersion?.status !== 'published' || (judgeSelected && !judgeProviderReady)" :loading="busy" data-testid="run-dataset-version" @click="launchEvaluation">运行此版本 →</el-button>
+      <div v-if="judgeSelected" class="dataset-judge-provider">
+        <b>Judge 模型配置</b>
+        <el-select v-model="judgeService" aria-label="Dataset 模型服务商" @change="selectJudgeService">
+          <el-option label="DeepSeek" value="deepseek" />
+          <el-option label="OpenAI" value="openai" />
+          <el-option label="自定义服务" value="custom" />
+        </el-select>
+        <el-input v-model="judgeModel" aria-label="Dataset Judge Model" placeholder="模型名称" />
+        <input v-model="judgeApiKey" class="judge-secret-input" type="password" autocomplete="new-password" aria-label="Dataset Judge API Key" placeholder="API Key" @paste="pasteJudgeApiKey" />
+        <el-input v-if="judgeService === 'custom'" v-model="judgeBaseUrl" aria-label="Dataset API Base URL" placeholder="API Base URL，例如 https://host/v1" />
+      </div>
     </div>
 
     <input ref="importInput" class="hidden-file-input" type="file" accept="application/json,.json" @change="importDataset" />

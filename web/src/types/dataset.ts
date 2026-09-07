@@ -65,6 +65,7 @@ export interface DatasetRecord {
 export interface DatasetSummary extends DatasetRecord {
   version: number | null
   case_count: number
+  cases: Pick<EvaluationCase, 'id'|'name'|'tags'|'category'|'difficulty'>[]
   has_draft: boolean
 }
 

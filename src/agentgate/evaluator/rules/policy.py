@@ -17,7 +17,7 @@ class PolicyComplianceEvaluator(Evaluator):
     def applies_to(self, spec, turn) -> bool:
         return bool(turn.policy_rules)
 
-    def evaluate(self, spec, turn, trace, resolve) -> Evaluation:
+    def evaluate(self, spec, turn, trace, resolve, context) -> Evaluation:
         checks = []
         if "high_risk_requires_review" in turn.policy_rules and turn.input.get("risk") == "high":
             approval = next(

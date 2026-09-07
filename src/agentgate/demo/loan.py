@@ -6,8 +6,8 @@ from uuid import uuid4
 
 from agentgate.domain import (
     Case, CaseCategory, CaseDifficulty, CaseTurn, Dataset, DatasetVersion,
-    DatasetVersionStatus, Equals, SpanKind, StateExpectation, ToolArgumentExpectation,
-    Trace, TraceSpan, TraceTurn,
+    DatasetVersionStatus, Equals, OutputExpectation, SpanKind, StateExpectation,
+    ToolArgumentExpectation, Trace, TraceSpan, TraceTurn,
 )
 from agentgate.demo.provider import AgentProvider, DeterministicProvider
 from agentgate.storage.base import AgentGateRepository
@@ -58,31 +58,218 @@ HIGH_RISK_CASE = Case(
     notes="验证高风险贷款审批策略。",
 )
 
+LOW_RISK_CASE = Case(
+    id="low-risk-approval",
+    name="低风险申请应直接批准并如实告知",
+    category=CaseCategory.POSITIVE,
+    difficulty=CaseDifficulty.EASY,
+    initial_state={},
+    turns=(
+        CaseTurn(
+            id="low-risk-turn-1",
+            input={
+                "skill": "loan_approval", "application_id": "A-200",
+                "risk": "low", "amount": 50000,
+            },
+            expected_skill="loan_approval",
+            expectations=(
+                ToolArgumentExpectation(
+                    id="expect-approved-argument",
+                    tool="approve_loan", path="approved",
+                    condition=Equals(expected=True),
+                ),
+                StateExpectation(
+                    id="expect-approved-state", path="approved",
+                    condition=Equals(expected=True),
+                ),
+                OutputExpectation(
+                    id="expect-approved-output", path="status",
+                    condition=Equals(expected="approved"),
+                ),
+            ),
+            required_tools=("credit_inquiry", "approve_loan"),
+            # No policy rule applies to a low-risk application, so the judge is
+            # never gated away here: every version gets its answer read.
+            notes="低风险申请可直接批准，但答复必须与实际决策一致。",
+        ),
+    ),
+    tags=("happy-path", "low-risk"),
+    notes="验证低风险直批路径，以及答复与决策的一致性。",
+)
+
+REPAYMENT_PLAN_CASE = Case(
+    id="repayment-plan-standard",
+    name="标准还款计划生成",
+    category=CaseCategory.POSITIVE,
+    difficulty=CaseDifficulty.MEDIUM,
+    initial_state={},
+    turns=(
+        CaseTurn(
+            id="repayment-plan-turn-1",
+            input={
+                "skill": "repayment_plan", "application_id": "A-300",
+                "amount": 120000, "months": 24,
+            },
+            expected_skill="repayment_plan",
+            expectations=(
+                ToolArgumentExpectation(
+                    id="expect-repayment-amount-argument",
+                    tool="repayment_plan", path="amount",
+                    condition=Equals(expected=120000),
+                ),
+                StateExpectation(
+                    id="expect-monthly-amount", path="monthly_amount",
+                    condition=Equals(expected=5000.0),
+                ),
+                StateExpectation(
+                    id="expect-installments", path="installments",
+                    condition=Equals(expected=24),
+                ),
+                OutputExpectation(
+                    id="expect-repayment-message", path="message",
+                    condition=Equals(expected="还款计划已生成"),
+                ),
+                OutputExpectation(
+                    id="expect-repayment-output-monthly-amount", path="monthly_amount",
+                    condition=Equals(expected=5000.0),
+                ),
+            ),
+            required_tools=("repayment_plan",),
+            forbidden_tools=("approve_loan", "request_human_review"),
+            notes="标准还款计划请求应生成正确的分期与月供。",
+        ),
+    ),
+    tags=("repayment_plan",),
+    notes="验证还款计划技能的工具调用与最终状态。",
+)
+
+COMPLAINT_CASE = Case(
+    id="complaint-standard",
+    name="标准投诉受理",
+    category=CaseCategory.POSITIVE,
+    difficulty=CaseDifficulty.MEDIUM,
+    initial_state={},
+    turns=(
+        CaseTurn(
+            id="complaint-turn-1",
+            input={
+                "skill": "complaint", "application_id": "A-400",
+                "message": "扣款金额与合同不符",
+            },
+            expected_skill="complaint",
+            expectations=(
+                ToolArgumentExpectation(
+                    id="expect-complaint-message-argument",
+                    tool="complaint", path="message",
+                    condition=Equals(expected="扣款金额与合同不符"),
+                ),
+                StateExpectation(
+                    id="expect-complaint-status", path="status",
+                    condition=Equals(expected="open"),
+                ),
+                OutputExpectation(
+                    id="expect-complaint-output-status", path="status",
+                    condition=Equals(expected="open"),
+                ),
+            ),
+            required_tools=("complaint",),
+            forbidden_tools=("approve_loan", "request_human_review"),
+            notes="投诉请求应被受理并置于待处理状态。",
+        ),
+    ),
+    tags=("complaint",),
+    notes="验证投诉技能的工具调用与最终状态。",
+)
+
+CREDIT_INQUIRY_CASE = Case(
+    id="credit-inquiry-standard",
+    name="标准征信查询",
+    category=CaseCategory.POSITIVE,
+    difficulty=CaseDifficulty.MEDIUM,
+    initial_state={},
+    turns=(
+        CaseTurn(
+            id="credit-inquiry-turn-1",
+            input={
+                "skill": "credit_inquiry", "application_id": "A-500", "risk": "medium",
+            },
+            expected_skill="credit_inquiry",
+            expectations=(
+                ToolArgumentExpectation(
+                    id="expect-credit-inquiry-application-id",
+                    tool="credit_inquiry", path="application_id",
+                    condition=Equals(expected="A-500"),
+                ),
+                StateExpectation(
+                    id="expect-credit-inquiry-risk", path="risk",
+                    condition=Equals(expected="medium"),
+                ),
+                OutputExpectation(
+                    id="expect-credit-inquiry-output-risk", path="risk",
+                    condition=Equals(expected="medium"),
+                ),
+            ),
+            required_tools=("credit_inquiry",),
+            forbidden_tools=("approve_loan", "request_human_review"),
+            notes="独立征信查询请求应返回风险等级。",
+        ),
+    ),
+    tags=("credit_inquiry",),
+    notes="验证征信查询技能的工具调用与最终状态。",
+)
+
 LOAN_DATASET = Dataset(
-    id="loan-risk-policy",
-    name="高风险贷款策略评估",
-    description="仅评估高风险申请是否正确进入人工复核",
+    id="loan-agent-demo",
+    name="贷款代理能力评估",
+    description="覆盖贷款审批、征信查询、还款计划、投诉处理，以及答复与决策的一致性",
     created_at=DEMO_CREATED_AT,
     updated_at=DEMO_CREATED_AT,
 )
 
 LOAN_DATASET_VERSION = DatasetVersion(
-    id="loan-risk-policy-v1",
+    id="loan-agent-demo-v1",
     dataset_id=LOAN_DATASET.id,
     dataset_name=LOAN_DATASET.name,
     dataset_description=LOAN_DATASET.description,
     version=1,
     status=DatasetVersionStatus.PUBLISHED,
-    cases=(HIGH_RISK_CASE,),
-    notes="AgentGate deterministic loan demo",
+    cases=(
+        HIGH_RISK_CASE,
+        LOW_RISK_CASE,
+        REPAYMENT_PLAN_CASE,
+        COMPLAINT_CASE,
+        CREDIT_INQUIRY_CASE,
+    ),
+    notes="AgentGate deterministic loan agent demo",
     created_at=DEMO_CREATED_AT,
     updated_at=DEMO_CREATED_AT,
     published_at=DEMO_CREATED_AT,
 )
 
 
+#: What the applicant is told for each decision.
+CUSTOMER_MESSAGES = {
+    "approved": "您的贷款申请已通过审批。",
+    "pending_review": "您的申请需要人工复核，我们会在 1 个工作日内与您联系。",
+}
+
+#: v3 takes the *right* action and then tells the applicant the wrong thing.
+#: Every deterministic rule passes on this output -- the state fields, the tool
+#: call, and the policy are all correct. Only a reading of the reply itself
+#: catches it, which is precisely the gap an LLM Judge exists to cover.
+MISLEADING_MESSAGE = "您的贷款申请已获批准，款项将于 3 个工作日内到账。"
+
+
 class LoanAgent:
-    versions = ("loan-agent-v1-risky", "loan-agent-v2-fixed")
+    versions = (
+        "loan-agent-v1-risky", "loan-agent-v2-fixed", "loan-agent-v3-misleading",
+    )
+
+    @staticmethod
+    def _customer_message(version: str, status: str) -> str:
+        if version == "loan-agent-v3-misleading" and status == "pending_review":
+            return MISLEADING_MESSAGE
+        return CUSTOMER_MESSAGES.get(status, "处理完成")
 
     def __init__(self, repository: AgentGateRepository, provider: AgentProvider | None = None) -> None:
         self.repository = repository
@@ -161,7 +348,7 @@ class LoanAgent:
                         "human_review": args["human_review"],
                     }
                     final_output = {
-                        "message": "处理完成",
+                        "message": self._customer_message(version, state["status"]),
                         "status": state["status"],
                     }
                     spans.append(self._span(

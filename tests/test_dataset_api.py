@@ -55,6 +55,7 @@ def test_web_dataset_workflow_persists_and_runs_selected_version(tmp_path):
             "version": "loan-agent-v2-fixed",
             "dataset_id": dataset_id,
             "dataset_version": 1,
+            "evaluator_ids": ["final-output"],
         })
         assert response.status_code == 201
         report = client.get(f"/api/runs/{response.json()['id']}").json()

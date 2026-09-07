@@ -6,9 +6,10 @@ from .case import (
     DatasetVersionStatus,
 )
 from .evaluation import (
-    ChildRef, Dimension, EvaluatorSpec, HybridEvaluatorSpec, JudgeConfig, JudgeEvidence,
-    Kind, LlmJudgeEvaluatorSpec, MethodRef, PromptSnapshot, RubricSnapshot,
-    RuleEvaluatorSpec, Severity,
+    ChildRef, Dimension, EvaluatorSpec, ExecutionPhase, HybridEvaluatorSpec, JudgeConfig,
+    JudgeEvidence, JudgeInputSelection, Kind, LlmJudgeEvaluatorSpec, MethodRef,
+    PrerequisitePolicy, PrerequisiteRef, PromptSnapshot, RubricSnapshot,
+    RuleEvaluatorSpec, ScoreScale, Severity,
 )
 from .expectation import (
     Condition, Equals, Expectation, MatchesJsonSchema, MatchesPattern, MustBeMissing,

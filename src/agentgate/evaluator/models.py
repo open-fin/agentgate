@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import TYPE_CHECKING, Any
 
 from pydantic import Field, field_serializer, field_validator, model_validator
 
 from agentgate.domain import (
     DomainModel, FailureStage, JudgeEvidence, MethodRef, Outcome, Result, freeze_json,
 )
+from agentgate.trace.redaction import DefaultRedactor
+
+if TYPE_CHECKING:  # Runtime imports would close a cycle back through evaluator.judge.
+    from agentgate.trace.redaction import Redactor
+
+    from .judge.model_protocol import JudgeModelClient
 
 
 class FailureCandidate(DomainModel):
@@ -56,6 +64,24 @@ class Evaluation(DomainModel):
     judge_evidence: JudgeEvidence | None = None
 
 
+@dataclass(frozen=True)
+class EvaluationContext:
+    """Runtime handles that application composition supplies to one evaluation.
+
+    This is deliberately not a DomainModel: it carries live objects such as model
+    clients, and it is never persisted or serialized. Rule evaluators
+    ignore it.
+
+    `redactor` defaults to a real redactor rather than to None, so that omitting
+    it can never mean "send unredacted case material to a provider". Turning
+    redaction off requires deliberately passing a permissive implementation.
+    """
+
+    deadline: datetime | None = None
+    judge_client: "JudgeModelClient | None" = None
+    redactor: "Redactor" = field(default_factory=DefaultRedactor)
+
+
 class Observation(DomainModel):
     values: tuple[Any, ...]
     span_ids: tuple[str | None, ...] = ()
@@ -91,6 +117,10 @@ class UnsupportedOperator(EvaluatorError):
 
 class InvalidHybridEvaluator(EvaluatorError):
     pass
+
+
+class InvalidEvaluatorConfiguration(EvaluatorError):
+    """A definition is unusable as configured; the Run must not start."""
 
 
 class CircularEvaluatorDependency(EvaluatorError):
