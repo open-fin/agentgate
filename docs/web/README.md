@@ -3,8 +3,8 @@
 The AgentGate Web application is a Chinese Vue 3 interface for evaluation workflows. It
 calls the FastAPI server and never imports backend code or accesses persistence directly.
 
-This document defines the target Web structure. The Dataset workspace foundation and
-asynchronous Run activity page are implemented; the final Vue Router/layout split and
+This document defines the target Web structure. The Dataset workspace foundation and asynchronous Run activity page are implemented. Vue Router
+route records and router-driven navigation are now wired; the final layout extraction and
 remaining planned pages are still pending. See [`../project-progress.md`](../project-progress.md)
 for implemented scope.
 
@@ -129,22 +129,22 @@ Page -> composable -> API module -> FastAPI
 
 ## Current Implementation
 
-The current vertical slice keeps the inherited manual navigation temporarily and adds
+The current vertical slice now uses Vue Router and a shared layout, and adds
 `RunWorkspacePage.vue`, `api/runs.ts`, and `types/run.ts`. It submits persisted Runs
 through FastAPI, presents all five lifecycle counters, filters queued/running/history
 views, and polls only while active work exists. Browser tests exercise this flow against
 real Redis, Celery, FastAPI, and SQLite on desktop and mobile.
 
-The standalone Overview, Result Center, Result Detail, and Vue Router/layout split remain
+The standalone Overview, Result Center, and Result Detail pages remain
 future Phase 6 work. The Run page's lifecycle counters satisfy the dispatcher POC without
 pretending the full Overview page exists.
 
 ## Refactor Notes
 
-- Replace manual `history.pushState` navigation in the inherited `App.vue` with Vue
-  Router.
-- Move sidebar and page-frame behavior into `layouts/AppLayout.vue`.
-- Split the inherited evaluation content from `App.vue` into Run and Result pages.
+- Router navigation now lives in AppLayout.vue and router/.
+
+- AppLayout.vue owns the shared sidebar and page frame.
+- Evaluation content now lives in EvaluationWorkspacePage.vue; Run and Result page extraction continues separately.
 - Move the Dataset workspace state and API orchestration into
   `useDatasetWorkspace.ts`; preserve the existing Dataset child components where their
   boundaries remain useful.
