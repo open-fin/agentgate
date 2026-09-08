@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, shallowRef } from 'vue'
+import { computed, nextTick, onMounted, ref, shallowRef } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, ApiError, type EvaluatorOption, type Version } from '../api/client'
 import { runsApi } from '../api/runs'
@@ -92,6 +92,8 @@ async function selectDataset(datasetId: string, preferredVersionId = '') {
     workspaceView.value = 'detail'
     detailTab.value = 'cases'
     editorOpen.value = false
+    await nextTick()
+    document.getElementById('dataset-workspace-title')?.scrollIntoView()
   } finally {
     loading.value = false
   }

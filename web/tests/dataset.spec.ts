@@ -48,7 +48,7 @@ test('creates, publishes, runs, and versions a Dataset through the real UI', asy
   await expect(page.getByText('用例已保存到草稿')).toBeVisible()
 
   await page.getByTestId('publish-draft').click()
-  await expect(page.getByText('已发布 v1')).toBeVisible()
+  await expect(page.getByTestId('version-published-1')).toBeVisible()
   await page.reload()
   await page.locator('.dataset-list-item').filter({ hasText: name }).click()
   await expect(page.getByTestId('version-published-1')).toBeVisible()
