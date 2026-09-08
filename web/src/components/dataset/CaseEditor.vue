@@ -61,9 +61,9 @@ function save() {
 </script>
 
 <template>
-  <section class="dataset-column case-editor-panel">
+  <section class="case-editor-panel">
     <div class="dataset-panel-heading">
-      <div><span class="step">CASE EDITOR</span><h2>用例编辑</h2></div>
+      <div><span class="step">CASE</span><h2>用例内容</h2></div>
       <el-button v-if="item && editable" type="primary" size="small" :loading="saving" data-testid="save-case" @click="save">保存用例</el-button>
     </div>
     <el-empty v-if="!form" description="选择或新建一个用例" />
@@ -102,9 +102,13 @@ function save() {
       <el-form-item label="备注">
         <el-input v-model="form.notes" type="textarea" :rows="2" />
       </el-form-item>
-      <el-form-item label="初始状态（JSON）">
-        <el-input v-model="initialState" type="textarea" :rows="3" class="json-editor" />
-      </el-form-item>
+      <el-collapse class="advanced-case-settings">
+        <el-collapse-item name="initial-state" title="高级设置：初始状态">
+          <el-form-item label="初始状态（JSON）">
+            <el-input v-model="initialState" type="textarea" :rows="4" class="json-editor" />
+          </el-form-item>
+        </el-collapse-item>
+      </el-collapse>
 
       <div class="subsection-heading turn-heading">
         <div><b>对话轮次</b><small>单轮用例保留一轮；多轮会共享会话状态。</small></div>
@@ -121,7 +125,7 @@ function save() {
               <el-tag size="small" effect="plain">{{ turn.id }}</el-tag>
               <el-button v-if="editable" link type="danger" @click.stop="removeTurn(Number(index))">删除此轮</el-button>
             </div>
-            <el-form-item label="输入（JSON）">
+            <el-form-item label="本轮输入参数（JSON）">
               <el-input v-model="inputs[Number(index)]" type="textarea" :rows="5" class="json-editor" :data-testid="`turn-input-${index}`" />
             </el-form-item>
             <el-form-item label="期望 Skill">

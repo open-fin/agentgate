@@ -29,7 +29,14 @@ const busy = ref(false)
 const loading = ref(false)
 const validationIssues = ref<ValidationIssue[]>([])
 const datasetDialog = ref(false)
+const editorOpen = ref(false)
+const runDialog = ref(false)
+const runCaseIds = ref<string[]|undefined>()
+const workspaceView = ref<'catalog'|'detail'>('catalog')
+const detailTab = ref<'cases'|'versions'|'settings'>('cases')
 const dialogMode = ref<'create'|'copy'>('create')
+const dialogSourceDatasetId = ref('')
+const dialogSourceVersion = ref<number|null>(null)
 const dialogName = ref('')
 const dialogDescription = ref('')
 const importInput = ref<HTMLInputElement|null>(null)
@@ -67,13 +74,12 @@ function selectFirstCase(version: DatasetVersion|null) {
 
 async function loadDatasets(preferredDatasetId = activeDatasetId.value) {
   datasets.value = await datasetApi.list()
-  const selected = datasets.value.find(item => item.id === preferredDatasetId) ?? datasets.value[0]
-  if (selected) await selectDataset(selected.id)
-  else {
-    activeDatasetId.value = ''
-    versions.value = []
-    chooseVersion()
-  }
+  const selected = datasets.value.find(item => item.id === preferredDatasetId)
+  if (selected) return selectDataset(selected.id)
+  activeDatasetId.value = ''
+  versions.value = []
+  workspaceView.value = 'catalog'
+  chooseVersion()
 }
 
 async function selectDataset(datasetId: string, preferredVersionId = '') {
@@ -83,6 +89,9 @@ async function selectDataset(datasetId: string, preferredVersionId = '') {
     const detail = await datasetApi.detail(datasetId)
     versions.value = detail.versions
     chooseVersion(preferredVersionId)
+    workspaceView.value = 'detail'
+    detailTab.value = 'cases'
+    editorOpen.value = false
   } finally {
     loading.value = false
   }
@@ -91,12 +100,14 @@ async function selectDataset(datasetId: string, preferredVersionId = '') {
 function selectVersion(version: DatasetVersion) {
   activeVersionId.value = version.id
   validationIssues.value = []
+  editorOpen.value = false
   selectFirstCase(version)
 }
 
 function selectCase(item: EvaluationCase) {
   activeCaseId.value = item.id
   editedCase.value = cloneJson(item)
+  editorOpen.value = true
 }
 
 function newCase(): EvaluationCase {
@@ -126,6 +137,7 @@ function addCase() {
   activeCaseId.value = item.id
   editedCase.value = item
   validationIssues.value = []
+  editorOpen.value = true
 }
 
 async function refreshAfterMutation(version: DatasetVersion, caseId = activeCaseId.value) {
@@ -148,6 +160,7 @@ async function saveCase(item: EvaluationCase) {
       : await datasetApi.addCase(activeDatasetId.value, item)
     await refreshAfterMutation(version, item.id)
     validationIssues.value = []
+    editorOpen.value = false
     ElMessage.success('用例已保存到草稿')
   } catch (error) {
     showError(error, '保存用例失败')
@@ -161,6 +174,7 @@ async function copyCase(item: EvaluationCase) {
   const version = await datasetApi.copyCase(activeDatasetId.value, item.id)
   const copied = version.cases.find(entry => !activeVersion.value?.cases.some(old => old.id === entry.id))
   await refreshAfterMutation(version, copied?.id)
+  editorOpen.value = true
   ElMessage.success('已复制用例')
 }
 
@@ -179,6 +193,8 @@ async function reorderCases(ids: string[]) {
 
 function openCreate() {
   dialogMode.value = 'create'
+  dialogSourceDatasetId.value = ''
+  dialogSourceVersion.value = null
   dialogName.value = ''
   dialogDescription.value = ''
   datasetDialog.value = true
@@ -186,6 +202,8 @@ function openCreate() {
 
 function openCopy(item: DatasetSummary) {
   dialogMode.value = 'copy'
+  dialogSourceDatasetId.value = item.id
+  dialogSourceVersion.value = item.version
   dialogName.value = `${item.name}（副本）`
   dialogDescription.value = item.description
   datasetDialog.value = true
@@ -198,9 +216,9 @@ async function submitDatasetDialog() {
     const result = dialogMode.value === 'create'
       ? await datasetApi.create(dialogName.value, dialogDescription.value)
       : await datasetApi.copy(
-          activeDatasetId.value,
+          dialogSourceDatasetId.value,
           dialogName.value,
-          activeVersion.value?.status === 'published' ? activeVersion.value.version : undefined,
+          dialogSourceVersion.value ?? undefined,
         )
     datasetDialog.value = false
     await loadDatasets(result.dataset.id)
@@ -224,6 +242,7 @@ async function createDraft(base: number|null) {
   try {
     const draft = await datasetApi.createDraft(activeDatasetId.value, base)
     await selectDataset(activeDatasetId.value, draft.id)
+    editorOpen.value = editedCase.value !== null
     ElMessage.success('新版本草稿已创建')
   } catch (error) {
     showError(error, '创建草稿失败')
@@ -278,6 +297,21 @@ function openImport() {
   importInput.value?.click()
 }
 
+function backToCatalog() {
+  workspaceView.value = 'catalog'
+  editorOpen.value = false
+  runDialog.value = false
+}
+
+function openRunSetup(caseIds?: string[]) {
+  if (activeVersion.value?.status !== 'published') {
+    ElMessage.warning('只能运行已发布版本')
+    return
+  }
+  runCaseIds.value = caseIds
+  runDialog.value = true
+}
+
 async function importDataset(event: Event) {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
@@ -307,6 +341,7 @@ async function launchEvaluation(caseIds?: string[]) {
       evaluatorIds: selectedEvaluators.value,
       caseIds,
     })
+    runDialog.value = false
     emit('runCreated', run)
     ElMessage.success(caseIds ? '当前用例已进入队列' : '评估已进入队列')
   } catch (error) {
@@ -317,7 +352,7 @@ async function launchEvaluation(caseIds?: string[]) {
 }
 
 function launchSelectedCase() {
-  return launchEvaluation(activeCaseId.value ? [activeCaseId.value] : [])
+  return launchEvaluation(runCaseIds.value)
 }
 
 function showError(error: unknown, fallback: string) {
@@ -343,38 +378,12 @@ onMounted(async () => {
       <div>
         <span class="step">DATASET WORKSPACE</span>
         <h1 id="dataset-workspace-title">测评集与用例管理</h1>
-        <p>编辑草稿、发布不可变版本，并用选定版本运行真实评估。</p>
+        <p>维护可复用用例，发布不可变版本，并从确定版本启动评估。</p>
       </div>
-      <div v-if="activeDataset" class="workspace-status">
-        <b>{{ activeDataset.name }}</b>
-        <span>{{ activeVersion?.status === 'draft' ? '编辑草稿' : `查看 v${activeVersion?.version ?? '—'}` }}</span>
-      </div>
+      <el-button v-if="workspaceView === 'detail'" @click="backToCatalog">返回测评集列表</el-button>
     </div>
 
-    <VersionSelector
-      v-if="activeDatasetId"
-      :versions="versions"
-      :active-id="activeVersionId"
-      :busy="busy"
-      @select="selectVersion"
-      @create-draft="createDraft"
-      @publish="publishDraft"
-      @discard="discardDraft"
-      @export="exportVersion"
-    />
-
-    <el-alert
-      v-if="validationIssues.length"
-      class="validation-alert"
-      title="草稿尚不能发布"
-      type="error"
-      :closable="false"
-      show-icon
-    >
-      <ul><li v-for="issue in validationIssues" :key="`${issue.path}-${issue.message}`"><code>{{ issue.path }}</code>：{{ issue.message }}</li></ul>
-    </el-alert>
-
-    <div class="dataset-layout" v-loading="loading">
+    <div v-if="workspaceView === 'catalog'" v-loading="loading">
       <DatasetList
         :items="datasets"
         :selected-id="activeDatasetId"
@@ -385,7 +394,63 @@ onMounted(async () => {
         @archive="archiveDataset"
         @import="openImport"
       />
+    </div>
+
+    <div v-else-if="activeDataset" class="dataset-detail" v-loading="loading">
+      <header class="dataset-detail-header">
+        <div>
+          <div class="dataset-detail-title">
+            <h2>{{ activeDataset.name }}</h2>
+            <el-tag v-if="activeVersion?.status === 'draft'" type="warning">草稿编辑中</el-tag>
+            <el-tag v-else type="success" effect="plain">已发布 v{{ activeVersion?.version }}</el-tag>
+          </div>
+          <p>{{ activeDataset.description || '暂无描述' }}</p>
+        </div>
+        <div class="dataset-detail-actions">
+          <el-button
+            v-if="activeVersion?.status === 'published'"
+            :disabled="!activeCaseId"
+            @click="openRunSetup(activeCaseId ? [activeCaseId] : [])"
+          >运行当前用例</el-button>
+          <el-button
+            v-if="activeVersion?.status === 'published'"
+            type="primary"
+            data-testid="open-run-dataset"
+            @click="openRunSetup()"
+          >运行此版本</el-button>
+        </div>
+      </header>
+
+      <VersionSelector
+        :versions="versions"
+        :active-id="activeVersionId"
+        :busy="busy"
+        @select="selectVersion"
+        @create-draft="createDraft"
+        @publish="publishDraft"
+        @discard="discardDraft"
+        @export="exportVersion"
+      />
+
+      <el-alert
+        v-if="validationIssues.length"
+        class="validation-alert"
+        title="草稿尚不能发布"
+        type="error"
+        :closable="false"
+        show-icon
+      >
+        <ul><li v-for="issue in validationIssues" :key="`${issue.path}-${issue.message}`"><code>{{ issue.path }}</code>：{{ issue.message }}</li></ul>
+      </el-alert>
+
+      <nav class="dataset-detail-tabs" aria-label="测评集详情">
+        <button :class="{ active: detailTab === 'cases' }" @click="detailTab = 'cases'">用例</button>
+        <button :class="{ active: detailTab === 'versions' }" @click="detailTab = 'versions'">版本记录</button>
+        <button :class="{ active: detailTab === 'settings' }" @click="detailTab = 'settings'">基本信息</button>
+      </nav>
+
       <CaseTable
+        v-if="detailTab === 'cases'"
         :items="activeVersion?.cases ?? []"
         :selected-id="activeCaseId"
         :editable="editable"
@@ -394,7 +459,33 @@ onMounted(async () => {
         @copy="copyCase"
         @remove="removeCase"
         @reorder="reorderCases"
+        @run="item => openRunSetup([item.id])"
       />
+
+      <section v-else-if="detailTab === 'versions'" class="dataset-tab-content">
+        <div class="tab-section-heading"><div><h3>版本记录</h3><p>已发布版本保持不变；修改内容前需创建新的草稿。</p></div></div>
+        <div class="version-history">
+          <button v-for="item in versions" :key="item.id" :class="{ active: item.id === activeVersionId }" @click="selectVersion(item)">
+            <span><b>{{ item.status === 'draft' ? '当前草稿' : `v${item.version}` }}</b><small>{{ item.cases.length }} 个用例 · {{ new Date(item.updated_at).toLocaleString('zh-CN') }}</small></span>
+            <el-tag :type="item.status === 'draft' ? 'warning' : 'success'" size="small" effect="plain">{{ item.status === 'draft' ? `基于 v${item.based_on_version ?? '空白'}` : '已发布' }}</el-tag>
+          </button>
+        </div>
+      </section>
+
+      <section v-else class="dataset-tab-content dataset-settings">
+        <div><span>测评集 ID</span><code>{{ activeDataset.id }}</code></div>
+        <div><span>当前版本</span><b>{{ activeVersion?.status === 'draft' ? '草稿' : `v${activeVersion?.version}` }}</b></div>
+        <div><span>当前用例数</span><b>{{ activeVersion?.cases.length ?? 0 }}</b></div>
+        <div class="dataset-settings-actions">
+          <el-button @click="openCopy(activeDataset)">复制测评集</el-button>
+          <el-button type="danger" plain @click="archiveDataset(activeDataset)">归档测评集</el-button>
+        </div>
+      </section>
+    </div>
+
+    <input ref="importInput" class="hidden-file-input" type="file" accept="application/json,.json" @change="importDataset" />
+
+    <el-drawer v-model="editorOpen" :title="editable ? '编辑用例' : '查看用例'" size="min(860px, 96vw)" destroy-on-close>
       <CaseEditor
         :item="editedCase"
         :editable="editable"
@@ -402,25 +493,30 @@ onMounted(async () => {
         :validation-issues="activeCaseIssues"
         @save="saveCase"
       />
-    </div>
+    </el-drawer>
 
-    <div v-if="activeDatasetId" class="dataset-run-bar">
-      <div>
-        <b>用此版本运行评估</b>
-        <span v-if="activeVersion?.status === 'published'">v{{ activeVersion.version }} · {{ activeVersion.cases.length }} 个用例 · 内容 {{ activeVersion.content_sha256.slice(0, 10) }}</span>
-        <span v-else>草稿不能运行，请先验证并发布。</span>
+    <el-dialog v-model="runDialog" :title="runCaseIds ? '运行当前用例' : '运行测评集版本'" width="min(560px, 94vw)">
+      <div class="run-dialog-summary">
+        <b>{{ activeDataset?.name }} · v{{ activeVersion?.version }}</b>
+        <span>{{ runCaseIds ? '仅运行选中的 1 个用例' : `运行全部 ${activeVersion?.cases.length ?? 0} 个用例` }}</span>
       </div>
-      <el-select v-model="selectedAgent" data-testid="dataset-agent-select" aria-label="运行 Agent 版本">
-        <el-option v-for="item in targetVersions" :key="item.id" :label="item.label" :value="item.id" />
-      </el-select>
-      <el-select v-model="selectedEvaluators" multiple collapse-tags aria-label="运行评估器">
-        <el-option v-for="item in evaluators" :key="item.id" :label="item.name" :value="item.id" />
-      </el-select>
-      <el-button :disabled="activeVersion?.status !== 'published' || !activeCaseId" :loading="busy" data-testid="run-selected-case" @click="launchSelectedCase">运行当前用例</el-button>
-      <el-button type="primary" :disabled="activeVersion?.status !== 'published'" :loading="busy" data-testid="run-dataset-version" @click="launchEvaluation()">运行此版本 →</el-button>
-    </div>
-
-    <input ref="importInput" class="hidden-file-input" type="file" accept="application/json,.json" @change="importDataset" />
+      <el-form label-position="top">
+        <el-form-item label="Agent 版本">
+          <el-select v-model="selectedAgent" data-testid="dataset-agent-select" aria-label="运行 Agent 版本">
+            <el-option v-for="item in targetVersions" :key="item.id" :label="item.label" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="评估器">
+          <el-select v-model="selectedEvaluators" multiple collapse-tags aria-label="运行评估器">
+            <el-option v-for="item in evaluators" :key="item.id" :label="item.name" :value="item.id" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="runDialog = false">取消</el-button>
+        <el-button type="primary" :loading="busy" data-testid="run-dataset-version" @click="launchSelectedCase">确认运行</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="datasetDialog" :title="dialogMode === 'create' ? '新建测评集' : '复制测评集'" width="min(460px, 92vw)">
       <el-form label-position="top">

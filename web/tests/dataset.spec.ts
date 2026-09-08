@@ -54,6 +54,7 @@ test('creates, publishes, runs, and versions a Dataset through the real UI', asy
   await expect(page.getByTestId('version-published-1')).toBeVisible()
   await expect(page.getByText('高风险申请必须人工复核', { exact: true }).first()).toBeVisible()
 
+  await page.getByTestId('open-run-dataset').click()
   await page.getByTestId('dataset-agent-select').click()
   await page.getByRole('option', { name: 'Risky version' }).click()
   await page.getByTestId('run-dataset-version').click()
