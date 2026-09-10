@@ -57,6 +57,15 @@ documentation reflects the result, and no required work within its scope remains
   aliases, dual schemas, payload migration validators, or deprecated API fields unless the
   user explicitly requests a migration path.
 
+## Feature Branch Workflow
+
+- Do not implement new features directly on `refactor-1`.
+- Before changing files for a new feature, update `refactor-1` and create a dedicated
+  branch named `feature/<feature-name>` from it.
+- Keep each feature branch limited to that feature and its focused tests and documentation.
+- Merge a completed feature branch back only after its required verification passes and the
+  user explicitly approves the merge.
+
 Every architecture/refactor progress response begins with a short `Where are we` block.
 
 ## Engineering Philosophy
