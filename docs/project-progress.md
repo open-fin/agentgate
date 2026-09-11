@@ -189,8 +189,8 @@ entity, and does not provide A/B history, experiment identity, or A/B lineage.
 
 Optimizer backend implementation and LLM root-cause integration are complete on
 `feature/llm-root-cause-analysis` and documented in
-`docs/optimizer/implementation-plan.md`. The full regression passes; commit, push,
-review, and merge remain.
+`docs/optimizer/implementation-plan.md`. The full regression passes and the feature is
+committed and pushed; review and merge remain.
 
 ## Verification And Delivery
 
