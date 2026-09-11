@@ -17,6 +17,13 @@ from agentgate.domain import (
     TargetRef,
     TargetType,
 )
+from agentgate.evaluator.judge import (
+    CredentialUnavailable,
+    JudgeModelError,
+    JudgeModelInvalidResponse,
+    JudgeModelTimeout,
+    JudgeModelUnavailable,
+)
 from agentgate.server.dependencies import get_dependencies
 from agentgate.server.routes.optimizer import router
 
@@ -111,6 +118,50 @@ def test_maps_application_errors(
 
     assert response.status_code == status_code
     assert response.json()["detail"] == str(error)
+
+
+@pytest.mark.parametrize(
+    ("error", "status_code", "detail"),
+    (
+        (
+            CredentialUnavailable("api_key=raw-secret"),
+            503,
+            "Root-cause model is unavailable",
+        ),
+        (
+            JudgeModelUnavailable("provider token=raw-secret"),
+            503,
+            "Root-cause model is unavailable",
+        ),
+        (
+            JudgeModelTimeout("provider password=raw-secret"),
+            504,
+            "Root-cause model timed out",
+        ),
+        (
+            JudgeModelInvalidResponse("response secret=raw-secret"),
+            502,
+            "Root-cause model returned an invalid response",
+        ),
+        (
+            JudgeModelError("request authorization=raw-secret"),
+            502,
+            "Root-cause model request failed",
+        ),
+    ),
+)
+def test_maps_model_errors_without_exposing_provider_details(
+    error: Exception,
+    status_code: int,
+    detail: str,
+) -> None:
+    response = client_for(OptimizationStub(error)).get(
+        "/api/runs/run-1/optimization"
+    )
+
+    assert response.status_code == status_code
+    assert response.json()["detail"] == detail
+    assert "raw-secret" not in response.text
 
 
 def test_rejects_blank_static_report_query() -> None:

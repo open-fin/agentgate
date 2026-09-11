@@ -63,6 +63,11 @@ def test_application_factory_registers_dependencies_and_routes(tmp_path) -> None
         application.state.dependencies.skill_analysis,
         SkillAnalysis,
     )
+    assert (
+        application.state.dependencies.optimization.root_cause_model_client
+        is None
+    )
+    assert application.state.dependencies.optimization.root_cause_model_id is None
     assert not hasattr(application.state, "repository")
     assert not hasattr(application.state, "service")
 
@@ -120,6 +125,8 @@ def test_dependencies_compose_configured_judge_and_close_it_once(
 
     assert dependencies.evaluators.default_specs[-1].id == "answer-quality"
     assert dependencies.runs.evaluator_management is dependencies.evaluators
+    assert dependencies.optimization.root_cause_model_client is client
+    assert dependencies.optimization.root_cause_model_id == "judge-model"
     assert "raw-secret" not in repr(dependencies)
     dependencies.close()
     dependencies.close()

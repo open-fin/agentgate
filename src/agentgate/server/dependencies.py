@@ -287,7 +287,19 @@ def build_dependencies(
             ),
             lineage=LineageQueries(repository),
             skill_analysis=SkillAnalysis(repository, skill_analyzer),
-            optimization=OptimizationAnalysis(repository),
+            optimization=OptimizationAnalysis(
+                repository,
+                root_cause_model_client=(
+                    configured_judge.client
+                    if configured_judge is not None
+                    else None
+                ),
+                root_cause_model_id=(
+                    configured_judge.model_id
+                    if configured_judge is not None
+                    else None
+                ),
+            ),
             api_keys=(
                 ApiKeyManagement(repository, configured_api_key_encryptor)
                 if configured_api_key_encryptor is not None

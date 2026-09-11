@@ -1,219 +1,199 @@
-"""Evidence-backed root-cause hypotheses and attribution confidence."""
+"""LLM-backed, evidence-constrained root-cause hypotheses."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 
 from agentgate.domain import (
+    Case,
+    EvaluationResult,
     FailureCluster,
-    FailureStage,
-    ObservedRouteKind,
     RootCauseHypothesis,
     RoutingConfusionMatrix,
-    RoutingObservation,
     SkillAnalysisFinding,
+    Trace,
     content_sha256,
 )
+from agentgate.evaluator.judge.model_protocol import (
+    JudgeModelClient,
+    JudgeModelInvalidResponse,
+    request_fingerprint,
+)
+from agentgate.trace.redaction import redact_value
+
+from .root_cause_contract import (
+    ParsedRootCauseHypothesis,
+    RootCauseContractError,
+    parse_root_cause_response,
+)
+from .root_cause_prompt import build_root_cause_request
 
 
-def _incorrect_routing_observations(
+MODEL_TEMPERATURE = 0.0
+MODEL_SEED = 0
+MAX_OUTPUT_TOKENS = 1_200
+MAX_INPUT_CHARS = 24_000
+
+
+def _validate_cluster_ids(clusters: tuple[FailureCluster, ...]) -> None:
+    cluster_ids = tuple(item.id for item in clusters)
+    if len(set(cluster_ids)) != len(cluster_ids):
+        raise ValueError("root-cause cluster IDs must be unique")
+
+
+def _allowed_span_ids(
     cluster: FailureCluster,
-    matrix: RoutingConfusionMatrix,
-) -> tuple[RoutingObservation, ...]:
-    if cluster.failure_stage != FailureStage.ROUTING:
-        return ()
+    traces: tuple[Trace, ...],
+) -> tuple[str, ...]:
+    trace_ids = {member.trace_id for member in cluster.members}
+    return tuple(
+        sorted(
+            {
+                span.span_id
+                for trace in traces
+                if trace.trace_id in trace_ids
+                for span in trace.spans
+            }
+        )
+    )
+
+
+def _allowed_finding_ids(
+    cluster: FailureCluster,
+    routing_matrix: RoutingConfusionMatrix,
+    static_findings: tuple[SkillAnalysisFinding, ...],
+) -> tuple[str, ...]:
     result_ids = {member.result_id for member in cluster.members}
-    observations = (
+    observations = tuple(
         observation
-        for cell in matrix.cells
+        for cell in routing_matrix.cells
         for observation in cell.observations
         if observation.result_id in result_ids
     )
-    incorrect = (
-        observation
-        for observation in observations
-        if observation.actual_route.kind != ObservedRouteKind.SKILL
-        or observation.actual_route.skill_id != observation.expected_skill_id
-    )
-    return tuple(sorted(
-        incorrect,
-        key=lambda item: (
-            item.identity,
-            item.expected_skill_id,
-            item.actual_route.kind.value,
-            item.actual_route.skill_id or "",
-        ),
-    ))
-
-
-def _relevant_static_findings(
-    observations: tuple[RoutingObservation, ...],
-    findings: tuple[SkillAnalysisFinding, ...],
-) -> tuple[SkillAnalysisFinding, ...]:
-    skill_ids = {observation.expected_skill_id for observation in observations}
+    skill_ids = {item.expected_skill_id for item in observations}
     skill_ids.update(
-        observation.actual_route.skill_id
-        for observation in observations
-        if observation.actual_route.kind == ObservedRouteKind.SKILL
-        and observation.actual_route.skill_id is not None
+        item.actual_route.skill_id
+        for item in observations
+        if item.actual_route.skill_id is not None
     )
-    return tuple(sorted(
-        (
-            finding
-            for finding in findings
+    return tuple(
+        sorted(
+            finding.id
+            for finding in static_findings
             if skill_ids.intersection(finding.skill_ids)
-        ),
-        key=lambda item: item.id,
-    ))
-
-
-def _confidence(
-    cluster: FailureCluster,
-    has_spans: bool,
-    observations: tuple[RoutingObservation, ...],
-    findings: tuple[SkillAnalysisFinding, ...],
-) -> float:
-    value = 0.35
-    if cluster.failure_count >= 2:
-        value += 0.10
-    if cluster.case_count >= 2:
-        value += 0.10
-    if has_spans:
-        value += 0.10
-    if observations:
-        value += 0.15
-    if findings:
-        value += 0.15 * max(finding.confidence for finding in findings)
-    return round(min(value, 0.95), 6)
+        )
+    )
 
 
 def _hypothesis_id(
     cluster: FailureCluster,
-    category: str,
-    result_ids: tuple[str, ...],
-    span_ids: tuple[str, ...],
-    observations: tuple[RoutingObservation, ...],
-    finding_ids: tuple[str, ...],
+    parsed: ParsedRootCauseHypothesis,
+    *,
+    request_sha256: str,
+    provider_id: str,
+    resolved_model_id: str,
 ) -> str:
-    digest = content_sha256({
-        "cluster_id": cluster.id,
-        "category": category,
-        "result_ids": result_ids,
-        "span_ids": span_ids,
-        "routing_observations": tuple(
-            {
-                "identity": observation.identity,
-                "expected_skill_id": observation.expected_skill_id,
-                "actual_route": observation.actual_route.model_dump(mode="json"),
-            }
-            for observation in observations
-        ),
-        "static_finding_ids": finding_ids,
-    })
+    digest = content_sha256(
+        {
+            "cluster_id": cluster.id,
+            "request_sha256": request_sha256,
+            "provider_id": provider_id,
+            "resolved_model_id": resolved_model_id,
+            "category": parsed.category,
+            "title": parsed.title,
+            "explanation": parsed.explanation,
+            "confidence": parsed.confidence,
+            "result_ids": parsed.result_ids,
+            "span_ids": parsed.span_ids,
+            "static_finding_ids": parsed.static_finding_ids,
+        }
+    )
     return f"root-cause-{digest[:24]}"
-
-
-def _explanation(
-    cluster: FailureCluster,
-    observations: tuple[RoutingObservation, ...],
-    findings: tuple[SkillAnalysisFinding, ...],
-) -> str:
-    stage = cluster.failure_stage.value.replace("_", " ")
-    text = (
-        f"Hypothesis: {cluster.failure_count} failed Results across "
-        f"{cluster.case_count} Cases share {stage} as the earliest observed "
-        "failure stage."
-    )
-    if observations:
-        text += (
-            f" {len(observations)} incorrect routing observations show expected "
-            "and actual Skill divergence."
-        )
-    if findings:
-        text += (
-            f" {len(findings)} static Skill findings involve those observed Skills."
-        )
-    return text
-
-
-def _validate_inputs(
-    clusters: tuple[FailureCluster, ...],
-    findings: tuple[SkillAnalysisFinding, ...],
-) -> None:
-    cluster_ids = tuple(cluster.id for cluster in clusters)
-    if len(set(cluster_ids)) != len(cluster_ids):
-        raise ValueError("root-cause cluster IDs must be unique")
-    result_ids = tuple(
-        member.result_id
-        for cluster in clusters
-        for member in cluster.members
-    )
-    if len(set(result_ids)) != len(result_ids):
-        raise ValueError("Results must belong to exactly one root-cause cluster")
-    finding_ids = tuple(finding.id for finding in findings)
-    if len(set(finding_ids)) != len(finding_ids):
-        raise ValueError("root-cause static finding IDs must be unique")
 
 
 def infer_root_causes(
     clusters: Sequence[FailureCluster],
+    cases: Sequence[Case],
+    results: Sequence[EvaluationResult],
+    traces: Sequence[Trace],
     routing_matrix: RoutingConfusionMatrix,
     static_findings: Sequence[SkillAnalysisFinding] = (),
+    *,
+    model_client: JudgeModelClient,
+    model_id: str,
+    timeout_seconds: float = 60,
 ) -> tuple[RootCauseHypothesis, ...]:
-    """Create one deterministic evidence-strength hypothesis per cluster."""
+    """Generate one validated LLM hypothesis for each failure cluster."""
 
     cluster_items = tuple(clusters)
-    finding_items = tuple(static_findings)
-    _validate_inputs(cluster_items, finding_items)
+    _validate_cluster_ids(cluster_items)
+    if not cluster_items:
+        return ()
 
-    hypotheses = []
-    for cluster in cluster_items:
-        observations = _incorrect_routing_observations(cluster, routing_matrix)
-        findings = _relevant_static_findings(observations, finding_items)
-        result_ids = tuple(sorted(member.result_id for member in cluster.members))
-        span_ids = tuple(sorted({
-            span_id
-            for member in cluster.members
-            for span_id in member.span_ids
-        }))
-        finding_ids = tuple(finding.id for finding in findings)
-        category = (
-            "routing_confusion"
-            if observations
-            else f"{cluster.failure_stage.value}_failure"
+    case_items = tuple(cases)
+    result_items = tuple(results)
+    trace_items = tuple(traces)
+    finding_items = tuple(static_findings)
+    hypotheses: list[RootCauseHypothesis] = []
+    for cluster in sorted(cluster_items, key=lambda item: item.id):
+        request = build_root_cause_request(
+            model_id=model_id,
+            cluster=cluster,
+            cases=case_items,
+            results=result_items,
+            traces=trace_items,
+            routing_matrix=routing_matrix,
+            static_findings=finding_items,
+            temperature=MODEL_TEMPERATURE,
+            seed=MODEL_SEED,
+            max_output_tokens=MAX_OUTPUT_TOKENS,
+            timeout_seconds=timeout_seconds,
+            max_input_chars=MAX_INPUT_CHARS,
+            redact=redact_value,
         )
-        title = (
-            "Possible Skill-routing confusion"
-            if observations
-            else (
-                "Possible "
-                f"{cluster.failure_stage.value.replace('_', ' ')} failure pattern"
+        response = model_client.complete(request)
+        try:
+            parsed = parse_root_cause_response(
+                response.text,
+                expected_cluster_id=cluster.id,
+                allowed_result_ids={member.result_id for member in cluster.members},
+                allowed_span_ids=_allowed_span_ids(cluster, trace_items),
+                allowed_static_finding_ids=_allowed_finding_ids(
+                    cluster,
+                    routing_matrix,
+                    finding_items,
+                ),
+            )
+        except RootCauseContractError as error:
+            raise JudgeModelInvalidResponse(
+                "Root-cause model returned invalid structured output"
+            ) from error
+
+        hypotheses.append(
+            RootCauseHypothesis(
+                id=_hypothesis_id(
+                    cluster,
+                    parsed,
+                    request_sha256=request_fingerprint(request),
+                    provider_id=model_client.provider_id,
+                    resolved_model_id=response.resolved_model_id,
+                ),
+                category=parsed.category,
+                title=parsed.title,
+                explanation=parsed.explanation,
+                confidence=parsed.confidence,
+                cluster_ids=(cluster.id,),
+                result_ids=parsed.result_ids,
+                span_ids=parsed.span_ids,
+                static_finding_ids=parsed.static_finding_ids,
             )
         )
-        hypotheses.append(RootCauseHypothesis(
-            id=_hypothesis_id(
-                cluster,
-                category,
-                result_ids,
-                span_ids,
-                observations,
-                finding_ids,
-            ),
-            category=category,
-            title=title,
-            explanation=_explanation(cluster, observations, findings),
-            confidence=_confidence(
-                cluster,
-                bool(span_ids),
-                observations,
-                findings,
-            ),
-            cluster_ids=(cluster.id,),
-            result_ids=result_ids,
-            span_ids=span_ids,
-            static_finding_ids=finding_ids,
-        ))
-    return tuple(sorted(
-        hypotheses,
-        key=lambda item: (-item.confidence, item.id),
-    ))
+    return tuple(
+        sorted(
+            hypotheses,
+            key=lambda item: (-item.confidence, item.id),
+        )
+    )
+
+
+__all__ = ["infer_root_causes"]

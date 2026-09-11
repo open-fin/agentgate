@@ -12,6 +12,7 @@ from agentgate.domain import (
     SkillAnalysisStatus,
 )
 from agentgate.domain.base import require_non_blank
+from agentgate.evaluator.judge.model_protocol import JudgeModelClient
 from agentgate.optimizer import build_optimization_report
 from agentgate.storage.repository import AgentGateRepository
 
@@ -37,12 +38,42 @@ class OptimizationSkillAnalysisNotUsable(ValueError):
 
 
 class OptimizationAnalysis:
-    """Load persisted evidence and invoke the pure optimizer pipeline."""
+    """Load persisted evidence and invoke the optimizer pipeline."""
 
-    __slots__ = ("repository",)
+    __slots__ = (
+        "repository",
+        "root_cause_model_client",
+        "root_cause_model_id",
+        "root_cause_timeout_seconds",
+    )
 
-    def __init__(self, repository: AgentGateRepository) -> None:
+    def __init__(
+        self,
+        repository: AgentGateRepository,
+        *,
+        root_cause_model_client: JudgeModelClient | None = None,
+        root_cause_model_id: str | None = None,
+        root_cause_timeout_seconds: float = 60,
+    ) -> None:
+        if (root_cause_model_client is None) != (root_cause_model_id is None):
+            raise ValueError(
+                "root-cause model client and model id must be configured together"
+            )
+        if root_cause_model_id is not None:
+            root_cause_model_id = require_non_blank(
+                root_cause_model_id,
+                "root-cause model_id",
+            )
+        if (
+            isinstance(root_cause_timeout_seconds, bool)
+            or not isinstance(root_cause_timeout_seconds, (int, float))
+            or root_cause_timeout_seconds <= 0
+        ):
+            raise ValueError("root_cause_timeout_seconds must be positive")
         self.repository = repository
+        self.root_cause_model_client = root_cause_model_client
+        self.root_cause_model_id = root_cause_model_id
+        self.root_cause_timeout_seconds = float(root_cause_timeout_seconds)
 
     def analyze_run(
         self,
@@ -77,7 +108,11 @@ class OptimizationAnalysis:
         return build_optimization_report(
             run,
             self.repository.list_results(run.id),
+            self.repository.list_traces(run.id),
             findings,
+            model_client=self.root_cause_model_client,
+            model_id=self.root_cause_model_id,
+            root_cause_timeout_seconds=self.root_cause_timeout_seconds,
         )
 
     def _skill_analysis_report(

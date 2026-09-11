@@ -1,6 +1,6 @@
 # AgentGate Project Progress
 
-Last updated: 2026-09-09
+Last updated: 2026-09-11
 
 ## Status Legend
 
@@ -16,7 +16,7 @@ Last updated: 2026-09-09
 |---|---|---|
 | `[CODEX-EVALUATOR]` | Persistent Evaluator Catalog | Complete and integrated into `refactor-1` |
 | `[CODEX-SKILL]` | Static Skill Analysis backend and API | Complete and integrated into `refactor-1` |
-| `[CODEX-OPTIMIZER]` | Optimizer backend and API | Complete on `feature/optimizer`; full regression passed |
+| `[CODEX-OPTIMIZER]` | LLM root-cause optimizer backend and API | Implemented and verified on `feature/llm-root-cause-analysis`; delivery pending |
 | `[CODEX-SCHEDULE]` | One-time scheduled Evaluation Runs | Complete and uncommitted on `feature/scheduled-runs` |
 | `[UNASSIGNED]` | Web pages | Not started |
 
@@ -181,21 +181,22 @@ entity, and does not provide A/B history, experiment identity, or A/B lineage.
 | [x] | Optimization domain contracts | Define immutable evidence, clusters, matrix, hypotheses, suggestions, and reports | `src/agentgate/domain/optimization.py` |
 | [x] | Failure clustering | Deterministically group failed Results by stable evaluation dimensions | `src/agentgate/optimizer/clustering.py` |
 | [x] | Observed routing confusion matrix | Measure expected versus actual Skill routing with explicit exclusions | `src/agentgate/optimizer/confusion_matrix.py` |
-| [x] | Root-cause hypotheses | Rank possible causes with exact dynamic and static evidence references | `src/agentgate/optimizer/root_cause.py` |
-| [x] | Reviewable suggestions | Produce deterministic targeted recommendations that require human review | `src/agentgate/optimizer/suggestions.py` |
-| [x] | Pure optimizer pipeline | Compose clustering, routing analysis, hypotheses, and suggestions | `src/agentgate/optimizer/pipeline.py` |
-| [x] | Optimizer application and API | Analyze completed persisted Runs through a read-only HTTP endpoint | `src/agentgate/application/optimization_analysis.py`, `src/agentgate/server/routes/optimizer.py` |
+| [x] | Root-cause hypotheses | Generate evidence-constrained hypotheses through bounded, redacted LLM requests and strict response validation | `src/agentgate/optimizer/root_cause.py`, `src/agentgate/optimizer/root_cause_prompt.py`, `src/agentgate/optimizer/root_cause_contract.py` |
+| [x] | Reviewable suggestions | Derive targeted recommendations from validated LLM hypotheses while requiring human review | `src/agentgate/optimizer/suggestions.py` |
+| [x] | Optimizer pipeline | Compose deterministic clustering and routing analysis with an injected model boundary | `src/agentgate/optimizer/pipeline.py` |
+| [x] | Optimizer application and API | Load persisted Results and Traces, reuse configured model access, and expose safe provider-failure responses | `src/agentgate/application/optimization_analysis.py`, `src/agentgate/server/routes/optimizer.py` |
 | [x] | Optimizer cleanup | Remove the rejected generic service wrapper | `src/agentgate/optimizer/service.py` |
 
-Optimizer backend implementation is documented in
-`docs/optimizer/implementation-plan.md`. The full backend regression passes; final
-worktree audit and feature delivery remain.
+Optimizer backend implementation and LLM root-cause integration are complete on
+`feature/llm-root-cause-analysis` and documented in
+`docs/optimizer/implementation-plan.md`. The full regression passes; commit, push,
+review, and merge remain.
 
 ## Verification And Delivery
 
 | Status | Capability | Function | Code location |
 |---|---|---|---|
-| [x] | Current backend regression | Verify the integrated backend including scheduled Runs | `tests/` - 789 passing |
+| [x] | Current backend regression | Verify the integrated backend including LLM root-cause analysis | `tests/` - 909 passing, 1 existing warning |
 | [x] | Redis/Celery integration | Verify broker, worker, state, queue visibility, and progress end to end | `tests/test_celery_dispatcher.py`, `web/tests/`, operational smoke |
 | [x] | Browser verification | Verify all currently implemented desktop and mobile workflows | `web/tests/` - 8 passing |
 | [x] | Documentation | Explain setup, APIs, Redis, Celery, and demo operation | `README.md`, `web/README.md`, `docs/` |
