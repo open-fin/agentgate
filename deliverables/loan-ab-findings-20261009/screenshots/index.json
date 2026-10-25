@@ -1,0 +1,62 @@
+[
+  {
+    "file": "01-base-v1.png",
+    "url": "http://127.0.0.1:7197/#/tasks/d9e73e75-9411-49e3-b356-f98f9c4d8b14/samples/c841007d-7fbb-502f-88dd-9bce178efbd3",
+    "heading": "execution_path_accuracy",
+    "capture_date": "2026-10-09"
+  },
+  {
+    "file": "02-base-v2.png",
+    "url": "http://127.0.0.1:7197/#/tasks/e91fb02f-e6bd-41c3-ac3f-189a5bc5d58a/samples/c841007d-7fbb-502f-88dd-9bce178efbd3",
+    "heading": "最终状态匹配",
+    "capture_date": "2026-10-09"
+  },
+  {
+    "file": "03-workflow-boundary-v1.png",
+    "url": "http://127.0.0.1:7197/#/tasks/e3a8f07c-5b36-4e71-9f69-773f3f92419a/samples/workflow-ab-core-10",
+    "heading": "最终状态匹配",
+    "capture_date": "2026-10-09"
+  },
+  {
+    "file": "04-workflow-query-v1.png",
+    "url": "http://127.0.0.1:7197/#/tasks/e3a8f07c-5b36-4e71-9f69-773f3f92419a/samples/workflow-ab-core-5",
+    "heading": "必需工具覆盖",
+    "capture_date": "2026-10-09"
+  },
+  {
+    "file": "05-workflow-memory-v1.png",
+    "url": "http://127.0.0.1:7197/#/tasks/e3a8f07c-5b36-4e71-9f69-773f3f92419a/samples/a05cf1f3-cbc0-551b-836e-3d205046a8e4",
+    "heading": "最终状态匹配",
+    "capture_date": "2026-10-09"
+  },
+  {
+    "file": "06-workflow-boundary-v2.png",
+    "url": "http://127.0.0.1:7197/#/tasks/f2809847-63bb-4c39-8527-0d0cdd4765e1/samples/workflow-ab-core-10",
+    "heading": "最终状态匹配",
+    "capture_date": "2026-10-09"
+  },
+  {
+    "file": "07-cloud-skill-v1.png",
+    "url": "http://127.0.0.1:7197/#/tasks/53ef54f6-8612-4dd1-b266-c1750e646cee/samples/cloudshrimp-ab-core-6",
+    "heading": "技能路由正确性",
+    "capture_date": "2026-10-09"
+  },
+  {
+    "file": "08-cloud-memory-v1.png",
+    "url": "http://127.0.0.1:7197/#/tasks/53ef54f6-8612-4dd1-b266-c1750e646cee/samples/9e274c20-5c4f-5530-8116-7f99e8734af7",
+    "heading": "最终状态匹配",
+    "capture_date": "2026-10-09"
+  },
+  {
+    "file": "09-cloud-skill-v2.png",
+    "url": "http://127.0.0.1:7197/#/tasks/3e42e48b-162b-46d5-af65-2ffefe3eacac/samples/cloudshrimp-ab-core-6",
+    "heading": "技能路由正确性",
+    "capture_date": "2026-10-09"
+  },
+  {
+    "file": "10-base-v2-remaining.png",
+    "url": "http://127.0.0.1:7197/#/tasks/12d1f26b-f96a-4489-ba57-7afb0d0d8b5a/samples/base-ab-core-3",
+    "heading": "loan_base_core_quality",
+    "capture_date": "2026-10-09"
+  }
+]
